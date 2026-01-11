@@ -12,7 +12,7 @@ use gdbstub::{
                 single_register_access::SingleRegisterAccessOps,
                 singlethread::{SingleThreadBase, SingleThreadResumeOps},
             },
-            breakpoints::BreakpointsOps,
+            breakpoints::{BreakpointsOps, SwBreakpoint},
             monitor_cmd::MonitorCmdOps,
         },
     },
@@ -24,8 +24,11 @@ use crate::{
     cache,
     exception::{DebugEventContext, ProgramStatus},
     gdb_target::{
-        arch::{ArmV7, hw::HwBreakpointManager},
-        breakpoint::Breakpoint,
+        arch::{
+            ArmBreakpointKind, ArmV7,
+            hw::{HwBreakpointManager, Specificity},
+        },
+        breakpoint::{BreakpointError, SWBreakpoint},
     },
     instruction::Instruction,
 };
@@ -39,107 +42,127 @@ pub mod single_register_access;
 /// Debugger state storage.
 pub struct V5Target {
     pub exception_ctx: Option<DebugEventContext>,
+    /// Indicates whether the debugger monitor loop should stop, allowing the program to continue
+    /// execution.
     pub resume: bool,
-    pub single_step: bool,
 
     /// The list of breakpoints.
-    ///
-    /// Breakpoint idx 0 is the fixup breakpoint, if one exists.
-    pub breaks: [Breakpoint; 10],
-    pub fixup_idx: usize,
+    pub breaks: [Option<SWBreakpoint>; 16],
     pub hw_manager: HwBreakpointManager,
+    /// If set, the hardware breakpoint system is being used to register a callback to re-enable a
+    /// software breakpoint after continuing, so when a break occurs we should only run fixups
+    /// and continue.
+    pub breakpoint_pending_reenable: Option<Breakpoint>,
+    /// If set, nreakpoints are being used to single step. Report any hardware breaks as single
+    /// steps instead of normal breakpoints.
+    pub single_step_request: Option<SingleStepRequest>,
 }
 
-impl Default for V5Target {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SingleStepRequest {
+    /// The address of the instruction that is being stepped over.
+    pub target_addr: u32,
+    pub kind: ArmBreakpointKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Breakpoint {
+    pub addr: u32,
+    pub is_thumb: bool,
+    pub is_hardware: bool,
 }
 
 impl V5Target {
     #[must_use]
-    pub fn new() -> Self {
-        let mut devcfg = unsafe { DevCfg::new_mmio_fixed() };
-
+    pub fn new(devcfg: &mut MmioDevCfg<'_>) -> Self {
         Self {
             exception_ctx: None,
             resume: false,
-            breaks: [Breakpoint {
-                is_active: false,
-                instr_addr: 0,
-                instr_backup: Instruction::Arm(0),
-            }; _],
-            fixup_idx: 0,
-            single_step: false,
-            hw_manager: HwBreakpointManager::setup(&mut devcfg),
+            breaks: [None; _],
+            breakpoint_pending_reenable: None,
+            single_step_request: None,
+            hw_manager: HwBreakpointManager::setup(devcfg),
         }
     }
 
-    /// Returns the index of the tracked breakpoint at the specified address.
-    #[must_use]
-    pub fn query_address(&self, addr: usize) -> Option<usize> {
-        self.breaks
-            .iter()
-            .enumerate()
-            .skip(1)
-            .find(|(_, b)| b.is_active && b.instr_addr == addr)
-            .map(|(i, _)| i)
-    }
-
-    /// Replaces the trapped instruction in-memory with the old contents, so that returning from
-    /// the current exception will continue execution.
+    /// Temporarily disables the current breakpoint so that returning from it will continue
+    /// execution rather than re-triggering it immediately.
     ///
-    /// Since this process involves *temporarily disabling* the requested breakpoint, it will
-    /// also create an internal "fixup" breakpoint to re-enable the given breakpoint. (See
-    /// [`Self::register_fixup`])
-    pub fn prepare_for_continue(&mut self, idx: usize) {
-        assert!(idx != 0);
-
-        let bkpt = &mut self.breaks[idx];
-        if !bkpt.is_active {
-            return;
-        }
+    /// This will also configure the processor to single-step one instruction, then re-enable the
+    /// specified breakpoint (if the specified breakpoint existed in the first place).
+    pub fn prepare_for_continue(&mut self, this_bkpt: Breakpoint) {
 
         // Disabling the current breakpoint allows us to continue execution without immediately
         // triggering it again.
-        unsafe {
-            bkpt.disable();
+        let changes_made = if this_bkpt.is_hardware {
+            // FIXME: Thumb32 breakpoints decay to Thumb16 after they are used once.
+            // We need some way to look up the address of a breakpoint and see what the kind is.
+            let kind = if this_bkpt.is_thumb {
+                ArmBreakpointKind::Thumb16
+            } else {
+                ArmBreakpointKind::Arm32
+            };
+
+            self.hw_manager
+                .remove_breakpoint_at(this_bkpt.addr, Specificity::Match, kind)
+        } else {
+            self.remove_sw_breakpoint(this_bkpt.addr)
+        };
+
+        let exception_ctx = self
+            .exception_ctx
+            .as_ref()
+            .expect("The debugger target has no exception context set");
+
+        if !changes_made {
+            // The breakpoint doesn't exist (anymore), so don't try to re-enable it.
+            return;
         }
 
-        cache::sync_instruction(bkpt.cache_target());
+        // Create an internal single-step breakpoint that, when activated, will re-enable this
+        // breakpoint and promptly continue program execution. This is used to support persistent
+        // breakpoints, since returning from a breakpoint requires you to temporarily disable it
+        // (otherwise it would immediately trigger again).
 
-        // This is supposed to be a persistent breakpoint, so we have to re-enable it at some
-        // point in the future. To enable this behavior, guess what the next instruction will
-        // be and put an internal breakpoint on it.
-        unsafe {
-            self.register_fixup(idx);
-        }
+        let kind = if exception_ctx.spsr.is_thumb() {
+            ArmBreakpointKind::Thumb16
+        } else {
+            ArmBreakpointKind::Arm32
+        };
+
+        self.hw_manager
+            .add_breakpoint_at(exception_ctx.program_counter, Specificity::Mismatch, kind)
+            .expect("Failed to make fixup breakpoint");
+        self.breakpoint_pending_reenable = Some(this_bkpt);
     }
 
-    /// Applies any fixup operation that this breakpoint is responsible for.
+    /// Applies any pending breakpoint fixup operation.
     ///
-    /// Returns whether a fixup breakpoint was inhabiting the given address.
-    pub unsafe fn apply_fixup(&mut self, addr: usize) -> bool {
-        let fixup = &mut self.breaks[0];
-
-        // Ensure this is an active fixup.
-        if !fixup.is_active || fixup.instr_addr != addr {
+    /// Returns whether any changes were made.
+    pub fn apply_fixup(&mut self) -> bool {
+        let Some(bkpt) = self.breakpoint_pending_reenable.take()
+        else {
             return false;
-        }
+        };
 
-        // This is a fixup breakpoint, so it's our responsibility to re-enable whatever
-        // breakpoint got invalidated, then get out of the way.
+        if bkpt.is_hardware {
+            let kind = if bkpt.is_thumb {
+                ArmBreakpointKind::Thumb16
+            } else {
+                ArmBreakpointKind::Arm32
+            };
 
-        debug_assert!(self.fixup_idx != 0);
-
-        fixup.is_active = false;
-        unsafe {
-            fixup.disable();
-        }
-
-        let invalidated_bkpt = &mut self.breaks[self.fixup_idx];
-        unsafe {
-            invalidated_bkpt.enable();
+            self.hw_manager
+                .add_breakpoint_at(bkpt.addr, Specificity::Match, kind)
+                .expect("Failed to re-enable breakpoint after continuing");
+        } else {
+            unsafe {
+                self.register_sw_breakpoint(
+                    bkpt.addr,
+                    bkpt.is_thumb,
+                )
+                .expect("Failed to re-enable breakpoint after continuing");
+            }
         }
 
         true
@@ -148,7 +171,6 @@ impl V5Target {
     /// Clears the resume flag.
     pub const fn reset_resume(&mut self) {
         self.resume = false;
-        self.single_step = false;
     }
 
     /// Marks the debugger as ready to resume.
@@ -156,65 +178,32 @@ impl V5Target {
         self.resume = true;
     }
 
-    /// Marks the debugger as ready to resume for a single-step.
-    pub const fn step(&mut self) {
-        self.resume = true;
-        self.single_step = true;
-    }
+    /// Prepare the debugger to resume, step one instruction, then stop again.
+    pub fn setup_step(&mut self) -> Result<(), BreakpointError> {
+        let exception_ctx = self
+            .exception_ctx
+            .as_ref()
+            .expect("The debugger target has no exception context set");
 
-    /// Creates a fixup breakpoint responsible for enabling the given breakpoint.
-    ///
-    /// This function places a new breakpoint on the next instruction that will be evaluated after
-    /// the given breakpoint returns. The new fixup breakpoint will not enter debug mode like
-    /// standard persistent breakpoints, and will instead only enable the given breakpoint and
-    /// return.
-    ///
-    /// This functionality is used to support persistent breakpoints, since returning from a
-    /// breakpoint requires you to temporarily disable it (otherwise it would immediately trigger
-    /// again).
-    ///
-    /// # Safety
-    ///
-    /// Fixup breakpoints must not be registered for breakpoints on branching instructions. This
-    /// requirement may change in the future.
-    ///
-    /// # Panics
-    ///
-    /// A panic will be emitted if a fixup breakpoint already exists, or if the given breakpoint
-    /// is not active.
-    unsafe fn register_fixup(&mut self, idx: usize) {
-        assert!(!self.breaks[0].is_active, "Tried to create multiple fixups");
-
-        let bkpt = &mut self.breaks[idx];
-        assert!(
-            bkpt.is_active,
-            "Can't create a fixup for an inactive breakpoint"
-        );
-
-        println!("MKFIX");
-
-        // Note: this is very temporary! In reality, this will have to decode the instruction
-        // and do a better job at guessing where the next instruction is. Currently, breakpoints
-        // cannot be placed on jumps because then we can't guess where to put the fixup!
-
-        let next_addr = bkpt.instr_addr + bkpt.instr_backup.size();
-        let instr_backup =
-            unsafe { Instruction::read(next_addr as *mut u32, bkpt.instr_backup.is_thumb()) };
-
-        let mut fixup = Breakpoint {
-            is_active: true,
-            instr_addr: next_addr,
-            instr_backup,
+        let kind = if exception_ctx.spsr.is_thumb() {
+            ArmBreakpointKind::Thumb16
+        } else {
+            ArmBreakpointKind::Arm32
         };
 
-        self.breaks[0] = fixup;
-        self.fixup_idx = idx;
+        self.hw_manager.add_breakpoint_at(
+            exception_ctx.program_counter,
+            Specificity::Mismatch,
+            kind,
+        )?;
 
-        unsafe {
-            fixup.enable();
-        }
+        self.resume = true;
+        self.single_step_request = Some(SingleStepRequest {
+            target_addr: exception_ctx.program_counter,
+            kind,
+        });
 
-        cache::sync_instruction(fixup.cache_target());
+        Ok(())
     }
 }
 
@@ -258,9 +247,9 @@ impl SingleThreadBase for V5Target {
                 _pad: 0,
                 registers: regs.r,
                 spsr: ProgramStatus(regs.cpsr),
-                link_register: regs.lr as usize,
-                program_counter: regs.pc as usize,
-                stack_pointer: regs.sp as usize,
+                link_register: regs.lr,
+                program_counter: regs.pc,
+                stack_pointer: regs.sp,
                 // ..*ctx
             };
         } else {

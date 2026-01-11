@@ -2,13 +2,12 @@ use std::fmt::{self, Debug, Formatter};
 
 use arbitrary_int::*;
 use cortex_ar::cache::clean_and_invalidate_data_cache_line_to_poc;
-use gdbstub_arch::arm::ArmBreakpointKind;
 use snafu::Snafu;
 use zynq7000::devcfg::MmioDevCfg;
 
 use crate::{
     cache,
-    gdb_target::arch::access_protected_mmio,
+    gdb_target::{arch::{ArmBreakpointKind, access_protected_mmio}, breakpoint::BreakpointError},
     regs::{
         BreakpointType, DebugEventReason, DebugID, DebugLogic, DebugROMAddress,
         DebugSelfAddressOffset, DebugStatusControl, DebugValid, DebugVersion, MmioDebugLogic,
@@ -25,6 +24,7 @@ pub struct HardwareCapabilities {
 pub struct HwBreakpointManager {
     capabilities: HardwareCapabilities,
     mmio: MmioDebugLogic<'static>,
+    used_breakpoints: [bool; 16],
 }
 
 impl HwBreakpointManager {
@@ -100,6 +100,7 @@ impl HwBreakpointManager {
                 num_watchpoints,
             },
             mmio: unsafe { DebugLogic::new_mmio_at(mmio_base) },
+            used_breakpoints: [false; _],
         };
 
         manager.reset();
@@ -147,12 +148,13 @@ impl HwBreakpointManager {
     ///
     /// # Errors
     ///
-    /// An error is returned if there are no more hardware breakpoints available.
+    /// An error is returned if there are no more hardware breakpoints available, or if the
+    /// breakpoint already exists.
     pub fn add_breakpoint_at(
         &mut self,
         addr: u32,
         specificity: Specificity,
-        kind: &ArmBreakpointKind,
+        kind: ArmBreakpointKind,
     ) -> Result<(), BreakpointError> {
         let (new_word, new_bas) = split_addr(addr, kind);
 
@@ -161,40 +163,28 @@ impl HwBreakpointManager {
         let mut next_disabled_idx = None;
 
         for idx in 0..self.capabilities.num_breakpoints {
-            let mut existing_bkpt = self.mmio.read_breakpoint_ctrl(idx as usize).unwrap();
+            let existing_bkpt = self.mmio.read_breakpoint_ctrl(idx as usize).unwrap();
             let existing_word = self.mmio.read_breakpoint_value(idx as usize).unwrap();
 
             if !existing_bkpt.enabled() && next_disabled_idx.is_none() {
                 next_disabled_idx = Some(idx as usize);
             }
 
-            if !existing_bkpt.enabled()
-                || existing_bkpt.breakpoint_type() != Ok(specificity.into())
-                || new_word != existing_word
+            if existing_bkpt.enabled()
+                && existing_bkpt.breakpoint_type() == Ok(specificity.into())
+                && new_word == existing_word
+                && existing_bkpt.byte_address_select() == new_bas
             {
-                continue;
+                return Err(BreakpointError::AlreadyExists);
             }
-
-            // Enable matching this instruction's part of the word.
-            existing_bkpt.set_byte_address_select(existing_bkpt.byte_address_select() | new_bas);
-
-            self.mmio
-                .write_breakpoint_ctrl(idx as usize, existing_bkpt)
-                .unwrap();
-
-            cortex_ar::asm::dsb();
-            cortex_ar::asm::isb();
-
-            return Ok(());
         }
 
-        // We can't reuse any existing breakpoints, so make a new one.
         let Some(bkpt_index) = next_disabled_idx else {
-            return Err(BreakpointError::NoMoreBreakpoints);
+            return Err(BreakpointError::NoSpace);
         };
 
-        // We store address aligned to the 4-byte word containing the address because breakpoints
-        // consider regions 4 bytes large and must be aligned as such.
+        // We set the breakpoint value to the 4-byte word containing the address because breakpoints
+        // look at regions 4 bytes large and must be aligned as such.
         self.mmio
             .write_breakpoint_value(bkpt_index, new_word)
             .unwrap();
@@ -217,6 +207,8 @@ impl HwBreakpointManager {
         cortex_ar::asm::dsb();
         cortex_ar::asm::isb();
 
+        self.used_breakpoints[bkpt_index] = true;
+
         Ok(())
     }
 
@@ -227,14 +219,17 @@ impl HwBreakpointManager {
         &mut self,
         addr: u32,
         specificity: Specificity,
-        kind: &ArmBreakpointKind,
+        kind: ArmBreakpointKind,
     ) -> bool {
         let (search_word, byte_address_select) = split_addr(addr, kind);
 
         let mut anything_removed = false;
         for bkpt_index in 0..self.capabilities.num_breakpoints {
             let mut bkpt = self.mmio.read_breakpoint_ctrl(bkpt_index as usize).unwrap();
-            if bkpt.breakpoint_type() != Ok(specificity.into()) || !bkpt.enabled() {
+            if !bkpt.enabled()
+                || bkpt.breakpoint_type() != Ok(specificity.into())
+                || bkpt.byte_address_select() != byte_address_select
+            {
                 continue;
             }
 
@@ -246,28 +241,27 @@ impl HwBreakpointManager {
                 continue;
             }
 
-            let new_bas = bkpt.byte_address_select() & !byte_address_select;
-            if new_bas != bkpt.byte_address_select() {
-                anything_removed = true;
-            }
-
-            if new_bas.value() == 0 {
-                // No more reason to have breakpoint, it won't match any addresses inside its span.
-                bkpt.set_enabled(false);
-            }
-
-            bkpt.set_byte_address_select(new_bas);
+            bkpt.set_enabled(false);
             self.mmio
                 .write_breakpoint_ctrl(bkpt_index as usize, bkpt)
                 .unwrap();
 
-            cortex_ar::asm::dsb();
-            cortex_ar::asm::isb();
+            anything_removed = true;
+            self.used_breakpoints[bkpt_index as usize] = false;
         }
+
+        cortex_ar::asm::dsb();
+        cortex_ar::asm::isb();
 
         anything_removed
     }
 
+    #[must_use]
+    pub fn breakpoints_available(&self) -> u8 {
+        self.used_breakpoints.iter().filter(|&&e| e).count() as u8
+    }
+
+    /// Returns the reason why the most recent debug event was triggered.
     #[must_use]
     pub fn last_break_reason(&self) -> Option<DebugEventReason> {
         let status = self.mmio.read_status_control_ext();
@@ -288,11 +282,6 @@ impl From<Specificity> for BreakpointType {
             Specificity::Mismatch => BreakpointType::UnlinkedInstrAddressMismatch,
         }
     }
-}
-
-#[derive(Debug, Snafu)]
-pub enum BreakpointError {
-    NoMoreBreakpoints,
 }
 
 impl Debug for HwBreakpointManager {
@@ -316,7 +305,7 @@ impl Debug for HwBreakpointManager {
 
 /// Splits an address into the word containing it and the byte-address-select that would match
 /// the instruction's offset into the word.
-fn split_addr(addr: u32, kind: &ArmBreakpointKind) -> (u32, u4) {
+fn split_addr(addr: u32, kind: ArmBreakpointKind) -> (u32, u4) {
     let word = addr & !0b11;
 
     // Specify which addresses inside the 4-byte breakpoint to match. Multi-byte instructions

@@ -28,7 +28,7 @@ pub enum CacheTarget {
     ///
     /// Since cache lines are 32 bytes wide, the CPU will ignore the lower 5 bits of the
     /// address.
-    Address(usize),
+    Address(u32),
 }
 
 /// Ensure the visibility of an instruction update for a uniprocessor.

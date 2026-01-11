@@ -7,9 +7,13 @@ use gdbstub::{
     },
 };
 use snafu::Snafu;
+use zynq7000::devcfg::DevCfg;
 
 use crate::{
-    Debugger, exception::DebugEventContext, gdb_target::V5Target, regs::DebugEventReason,
+    Debugger,
+    exception::DebugEventContext,
+    gdb_target::{Breakpoint, SingleStepRequest, V5Target, arch::hw::Specificity},
+    regs::DebugEventReason,
     transport::Transport,
 };
 
@@ -36,7 +40,7 @@ impl<S: Transport> V5Debugger<S> {
     #[must_use]
     pub fn new(stream: S) -> Self {
         Self {
-            target: V5Target::new(),
+            target: V5Target::new(&mut unsafe { DevCfg::new_mmio_fixed() }),
             stream,
             gdb_buffer: Some(Box::leak(vec![0; 0x2000].into_boxed_slice())),
             gdb: None,
@@ -58,16 +62,25 @@ impl<S: Transport> V5Debugger<S> {
             GdbStubStateMachine::Running(gdb) => {
                 let reason = target.hw_manager.last_break_reason();
 
-                let stop_reason = if target.single_step {
-                    SingleThreadStopReason::DoneStep
-                } else if reason == Some(DebugEventReason::Breakpoint) {
-                    SingleThreadStopReason::HwBreak(())
+                let reported_reason = if reason == Some(DebugEventReason::Breakpoint) {
+                    // Hardware breakpoints are also used for single stepping, and we should report
+                    // that differently.
+                    // TODO: If both a single step and a hardware breakpoint are triggered, how
+                    // should be handle both? Right now, this logic will prioritize the single step,
+                    // but we might want it to be the other way around.
+                    if target.single_step_request.is_some() {
+                        SingleThreadStopReason::DoneStep
+                    } else {
+                        SingleThreadStopReason::HwBreak(())
+                    }
                 } else {
+                    // GDB interprets this as a software breakpoint if there is one, but will halt
+                    // even if the user didn't explicitly set one.
                     SingleThreadStopReason::Signal(Signal::SIGTRAP)
                 };
-                target.single_step = false;
+                target.single_step_request = None;
 
-                Ok(gdb.report_stop(target, stop_reason)?)
+                Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
@@ -115,42 +128,57 @@ impl<S: Transport> V5Debugger<S> {
 unsafe impl<S: Transport> Debugger for V5Debugger<S> {
     unsafe fn register_breakpoint(
         &mut self,
-        addr: usize,
+        addr: u32,
         thumb: bool,
     ) -> Result<(), crate::gdb_target::breakpoint::BreakpointError> {
-        unsafe { self.target.register_breakpoint(addr, thumb) }
+        unsafe { self.target.register_sw_breakpoint(addr, thumb) }
     }
 
     unsafe fn handle_debug_event(&mut self, ctx: &mut DebugEventContext) {
         // Internal fixup breakpoints can skip all the normal debug loop logic once their side
         // effects are finished.
-        let is_fixup = unsafe { self.target.apply_fixup(ctx.program_counter) };
-        if is_fixup {
+        if self.target.apply_fixup() {
             return;
         }
-
-        // SAFETY: Since the address was able to be properly fetched, it implies it is valid for
-        // reads.
-        let instr = unsafe { ctx.read_instr() };
-
-        let tracked_bkpt = self.target.query_address(ctx.program_counter);
-
-        if let Some(idx) = tracked_bkpt {
-            // If this is a tracked breakpoint (as opposed to an explicit `bkpt` call), then
-            // we need to replace it with the real, backed-up instruction so that when we return,
-            // the real code is run instead of throwing us straight back into this debug handler.
-            self.target.prepare_for_continue(idx);
-        }
-
         self.target.exception_ctx = Some(*ctx);
-        self.run_debug_console();
 
-        // Normally we try to avoid an infinite loop of breakpoints by replacing tracked breakpoints
-        // with their real instructions and re-running them. But if the `bkpt` *is* the real
-        // instruction then we don't need to do the normal replace-and-rerun thing. Instead, we just
-        // skip over it because it has been completed.
-        if tracked_bkpt.is_none() {
-            ctx.program_counter += instr.size();
+        let reason = self.target.hw_manager.last_break_reason();
+
+        let tracked_bkpt = self.target.query_sw_breakpoint(ctx.program_counter);
+        let is_manual_bkpt = tracked_bkpt.is_none() && reason == Some(DebugEventReason::BkptInstr);
+
+        // If we previously wanted to single step, we can permanently remove the breakpoint that
+        // supported that now. The saved single step request isn't removed yet so that the stop
+        // reason we report to GDB is correct.
+        if let Some(single_step) = self.target.single_step_request {
+            self.target.hw_manager.remove_breakpoint_at(
+                single_step.target_addr,
+                Specificity::Mismatch,
+                single_step.kind,
+            );
         }
+
+        if is_manual_bkpt {
+            // Normally we try to avoid an infinite loop of breakpoints by replacing tracked
+            // software breakpoints with their real instructions and re-running them. But if the
+            // `bkpt` *is* the real instruction then we don't need to do the normal
+            // replace-and-rerun thing. Instead, we just skip over it because its side-effect has
+            // been completed.
+
+            // SAFETY: Since the address was able to be properly fetched, it implies it is valid for
+            // reads.
+            let instr = unsafe { ctx.read_instr() };
+            ctx.program_counter += instr.size() as u32;
+        } else {
+            // Otherwise, this is a managed breakpoint, which means we need to temporarily disable
+            // it so that we can continue execution when the debug console exits.
+            self.target.prepare_for_continue(Breakpoint {
+                addr: ctx.program_counter,
+                is_thumb: ctx.spsr.is_thumb(),
+                is_hardware: reason == Some(DebugEventReason::Breakpoint),
+            });
+        }
+
+        self.run_debug_console();
     }
 }

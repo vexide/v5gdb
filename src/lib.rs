@@ -30,10 +30,8 @@ pub unsafe trait Debugger: Send {
     ///
     /// # Safety
     ///
-    /// Breakpoints may only be placed on executable addresses containing instructions.
-    ///
-    /// The caller must ensure that the instruction on which the breakpoint is being placed
-    /// has linear control flow (it is not a jump).
+    /// Breakpoints may only be placed on read/write/executable addresses which contain an
+    /// instruction and are not used as data.
     ///
     /// # Errors
     ///
@@ -41,7 +39,7 @@ pub unsafe trait Debugger: Send {
     /// the specified address already has a breakpoint on it.
     unsafe fn register_breakpoint(
         &mut self,
-        addr: usize,
+        addr: u32,
         thumb: bool,
     ) -> Result<(), BreakpointError>;
 

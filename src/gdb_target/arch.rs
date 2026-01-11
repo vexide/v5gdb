@@ -6,14 +6,7 @@ use cortex_ar::{
 };
 use critical_section::CriticalSection;
 use gdbstub::arch::Arch;
-use gdbstub_arch::arm::{
-    ArmBreakpointKind,
-    reg::{ArmCoreRegs, id::ArmCoreRegId},
-};
-use snafu::Snafu;
-use zynq7000::devcfg::MmioDevCfg;
-
-use crate::regs::{DebugID, DebugStatusControl, SecureDebugEnable};
+use gdbstub_arch::arm::reg::{ArmCoreRegs, id::ArmCoreRegId};
 
 pub mod hw;
 
@@ -28,6 +21,32 @@ impl Arch for ArmV7 {
 
     fn target_description_xml() -> Option<&'static str> {
         Some(include_str!("arch/target.xml"))
+    }
+}
+
+/// ARM-specific breakpoint kinds.
+///
+/// Extracted from the GDB documentation at
+/// [E.5.1.1 ARM Breakpoint Kinds](https://sourceware.org/gdb/current/onlinedocs/gdb/ARM-Breakpoint-Kinds.html#ARM-Breakpoint-Kinds)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmBreakpointKind {
+    /// 16-bit Thumb mode breakpoint.
+    Thumb16,
+    /// 32-bit Thumb mode (Thumb-2) breakpoint.
+    Thumb32,
+    /// 32-bit ARM mode breakpoint.
+    Arm32,
+}
+
+impl gdbstub::arch::BreakpointKind for ArmBreakpointKind {
+    fn from_usize(kind: usize) -> Option<Self> {
+        let kind = match kind {
+            2 => ArmBreakpointKind::Thumb16,
+            3 => ArmBreakpointKind::Thumb32,
+            4 => ArmBreakpointKind::Arm32,
+            _ => return None,
+        };
+        Some(kind)
     }
 }
 

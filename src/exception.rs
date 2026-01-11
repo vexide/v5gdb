@@ -148,9 +148,9 @@ pub struct DebugEventContext {
     /// The saved program status register (spsr) from before the exception.
     pub spsr: ProgramStatus,
     /// The stack pointer from before the exception.
-    pub stack_pointer: usize,
+    pub stack_pointer: u32,
     /// The link register from before the exception.
-    pub link_register: usize,
+    pub link_register: u32,
 
     pub _pad: u32,
 
@@ -172,7 +172,7 @@ pub struct DebugEventContext {
     /// [da-exception]: https://developer.arm.com/documentation/ddi0406/b/System-Level-Architecture/The-System-Level-Programmers--Model/Exceptions/Data-Abort-exception
     /// [pf-exception]: https://developer.arm.com/documentation/ddi0406/b/System-Level-Architecture/The-System-Level-Programmers--Model/Exceptions/Prefetch-Abort-exception
     /// [svc-exception]: https://developer.arm.com/documentation/ddi0406/b/System-Level-Architecture/The-System-Level-Programmers--Model/Exceptions/Supervisor-Call--SVC--exception
-    pub program_counter: usize,
+    pub program_counter: u32,
 }
 
 impl DebugEventContext {

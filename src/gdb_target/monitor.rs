@@ -18,8 +18,8 @@ impl MonitorCmd for V5Target {
                 gdbstub::outputln!(out, "{i:>2}: {breakpt:x?}");
             }
         } else if cmd.starts_with("mk") {
-            if let Ok(addr) = usize::from_str_radix(parts.next().unwrap_or_default(), 16) {
-                let res = unsafe { self.register_breakpoint(addr, false) };
+            if let Ok(addr) = u32::from_str_radix(parts.next().unwrap_or_default(), 16) {
+                let res = unsafe { self.register_sw_breakpoint(addr, false) };
 
                 gdbstub::outputln!(out, "{res:x?}");
             } else {

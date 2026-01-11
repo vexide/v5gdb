@@ -53,9 +53,9 @@ impl SingleRegisterAccess<()> for V5Target {
 
                     *storage = val;
                 }
-                ArmCoreRegId::Sp => ctx.stack_pointer = val as usize,
-                ArmCoreRegId::Lr => ctx.link_register = val as usize,
-                ArmCoreRegId::Pc => ctx.program_counter = val as usize,
+                ArmCoreRegId::Sp => ctx.stack_pointer = val,
+                ArmCoreRegId::Lr => ctx.link_register = val,
+                ArmCoreRegId::Pc => ctx.program_counter = val,
                 ArmCoreRegId::Cpsr => ctx.spsr = ProgramStatus(val),
                 _ => return Err(TargetError::NonFatal),
             }
