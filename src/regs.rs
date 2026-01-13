@@ -204,7 +204,7 @@ impl SecureDebugEnable {
     }
 
     /// Update the current value.
-    pub unsafe fn write(self) {
+    pub fn write(self) {
         unsafe {
             asm!(
                 "mcr p15, 0, {value}, c1, c1, 1",
@@ -253,8 +253,61 @@ pub struct DebugLogic {
     /// `value` & 0b11 must be 0.
     watchpoint_value: [u32; 16],
     watchpoint_ctrl: [WatchpointControl; 16],
-    // The 2nd half of the debug logic MMIO is not accessed.
+    _debug_rom_addr: u32,
+    _reserved5: [u32; 15],
+    _breakpoint_extd_value: [u32; 16],
+    _reserved6: [u32; 32],
+    _os_lock_access: u32,
+    #[mmio(PureRead)]
+    os_lock_status: u32,
+    _os_save_restore: u32,
+    _os_double_lock: u32,
+    powerdown_reset_ctrl: u32,
+    #[mmio(PureRead)]
+    powerdown_reset_status: u32,
+    _reserved7: [u32; 58],
+    _debug_self_addr_offset: u32,
+    _reserved8: [u32; 255],
+    _impl_defined0: [u32; 64],
+    _reserved9: [u32; 256],
+    #[mmio(PureRead)]
+    processor_id: [u32; 64],
+    _reserved10: [u32; 32],
+    _integration: [u32; 32],
+    _integration_mode_ctrl: u32,
+    _reserved11: [u32; 39],
+    claim_tag_set: u32,
+    claim_tag_clear: u32,
+    _reserved12: [u32; 2],
+    /// Writing [`DEBUG_UNLOCK_MAGIC`] to this field disables the [software
+    /// lock](Self::lock_status) on debug register writes.
+    ///
+    /// If any other value is written, the lock is re-enabled.
+    #[mmio(Write)]
+    lock_access: u32,
+    /// Indicates whether the debug software lock is active, which prevents accidental damage to
+    /// the debug registers by disabling writes. It is on by default.
+    ///
+    /// This field is read-only. The software lock can be disabl
+    #[mmio(PureRead)]
+    lock_status: SoftwareLock,
+    #[mmio(PureRead)]
+    authentication_status: u32,
+    _reserved13: u32,
+    _debug_device_id_2: u32,
+    _debug_device_id_1: u32,
+    #[mmio(PureRead)]
+    device_type: u32,
+    #[mmio(PureRead)]
+    peripheral_id_4: u32,
+    #[mmio(PureRead)]
+    peripheral_ids: [u32; 4],
+    #[mmio(PureRead)]
+    component_ids: [u32; 4],
 }
+
+/// Writing this value to [`DebugLogic::lock_access`] enables writing to debug registers.
+pub const DEBUG_UNLOCK_MAGIC: u32 = 0xC5ACCE55;
 
 #[bitfield(u32, debug)]
 pub struct BreakpointControl {
@@ -286,6 +339,10 @@ pub struct BreakpointControl {
     privileged_mode_ctrl: PrivilegeModeFilter,
     #[bit(0, rw)]
     enabled: bool,
+}
+
+impl BreakpointControl {
+    pub const DISABLED: Self = BreakpointControl::new_with_raw_value(0).with_enabled(false);
 }
 
 #[bitenum(u4, exhaustive = false)]
@@ -345,6 +402,10 @@ pub struct WatchpointControl {
     enabled: bool,
 }
 
+impl WatchpointControl {
+    pub const DISABLED: Self = WatchpointControl::new_with_raw_value(0).with_enabled(false);
+}
+
 #[bitenum(u1, exhaustive = true)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum WatchpointType {
@@ -369,4 +430,18 @@ pub enum PrivilegedAccessFilter {
     Level1Only = 0b01,
     UserOnly = 0b10,
     All = 0b11,
+}
+
+#[bitfield(u32)]
+pub struct SoftwareLock {
+    /// Always false, indicates whether the unlock register can be written to as a non-32-bit
+    /// value.
+    #[bit(2, r)]
+    not_32bit_access: bool,
+    /// Indicates whether the software lock is enabled.
+    #[bit(1, r)]
+    software_lock_status: bool,
+    /// Always true, indicates whether the software lock is implemented.
+    #[bit(0, r)]
+    software_lock_implemented: bool,
 }

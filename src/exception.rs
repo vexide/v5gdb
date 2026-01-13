@@ -12,7 +12,7 @@ pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) {
         DEBUGGER
             .get()
             .unwrap()
-            .lock()
+            .try_lock()
             .unwrap()
             .handle_debug_event(&mut *ctx);
     }

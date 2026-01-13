@@ -1,7 +1,13 @@
-use std::{convert::Infallible, time::Duration};
+use std::{any::Any, convert::Infallible, hint::black_box, time::Duration};
 
 use v5gdb::{
-    debugger::V5Debugger, gdb_target::arch::hw::HwBreakpointManager, transport::StdioTransport,
+    DEBUGGER,
+    debugger::V5Debugger,
+    gdb_target::arch::{
+        ArmBreakpointKind,
+        hw::{HwBreakpointManager, Specificity},
+    },
+    transport::StdioTransport,
 };
 use vex_sdk::{vexSerialReadChar, vexTasksRun};
 use vexide::prelude::*;
@@ -24,12 +30,20 @@ fn fib(n: u64) -> u64 {
 
 #[vexide::main(banner(enabled = false))]
 async fn main(_peripherals: Peripherals) {
-    v5gdb::install(V5Debugger::new(StdioTransport::new()));
+    let mut debugger = V5Debugger::new(StdioTransport::new());
 
-    println!("Hello, world");
+    let target = debugger.target();
 
-    v5gdb::breakpoint();
+    target.hw_manager.set_locked(false);
 
-    let n = fib(80);
+    println!("{:#x?}", &target.hw_manager);
+    target
+        .hw_manager
+        .add_breakpoint_at(0x3800_0020, Specificity::Match, ArmBreakpointKind::Arm32)
+        .unwrap();
+
+    println!("{:#x?}", &target.hw_manager);
+
+    let n = fib(black_box(40));
     println!("{n}");
 }

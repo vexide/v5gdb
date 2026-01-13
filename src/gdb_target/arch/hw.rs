@@ -7,11 +7,12 @@ use zynq7000::devcfg::MmioDevCfg;
 
 use crate::{
     cache,
-    gdb_target::{arch::{ArmBreakpointKind, access_protected_mmio}, breakpoint::BreakpointError},
+    gdb_target::{
+        arch::{ArmBreakpointKind, access_protected_mmio},
+        breakpoint::BreakpointError,
+    },
     regs::{
-        BreakpointType, DebugEventReason, DebugID, DebugLogic, DebugROMAddress,
-        DebugSelfAddressOffset, DebugStatusControl, DebugValid, DebugVersion, MmioDebugLogic,
-        PrivilegeModeFilter, SecureDebugEnable, SecurityFilter,
+        BreakpointControl, BreakpointType, DEBUG_UNLOCK_MAGIC, DebugEventReason, DebugID, DebugLogic, DebugROMAddress, DebugSelfAddressOffset, DebugStatusControl, DebugValid, DebugVersion, MmioDebugLogic, PrivilegeModeFilter, SecureDebugEnable, SecurityFilter, WatchpointControl
     },
 };
 
@@ -29,6 +30,8 @@ pub struct HwBreakpointManager {
 
 impl HwBreakpointManager {
     /// Sets up hardware debugging.
+    ///
+    /// The returned breakpoint manager is locked by default.
     ///
     /// # Panics
     ///
@@ -70,11 +73,10 @@ impl HwBreakpointManager {
             "The operating system has disabled hardware debugging."
         );
 
-        // Enable debugging in the Secure PL0 processor mode.
+        // Enable debugging in the Secure PL0 processor mode. (Secure PL1 is controlled by the
+        // Zynq's devcfg.CTRL.SPIDEN, we already enabled it.)
         let secure_debug = SecureDebugEnable::read();
-        unsafe {
-            secure_debug.with_secure_user_invasive_debug(true).write();
-        }
+        secure_debug.with_secure_user_invasive_debug(true).write();
 
         // Look up where we will access debug MMIO from.
 
@@ -103,24 +105,38 @@ impl HwBreakpointManager {
             used_breakpoints: [false; _],
         };
 
+        manager.set_locked(false);
         manager.reset();
+        manager.set_locked(true);
         manager
     }
 
     /// Disable all existing breakpoints and enable Monitor (debug exception) hardware debug mode.
     pub fn reset(&mut self) {
+        // This doesn't have any meaning, it's just a value that clearly isn't random or a real
+        // address.
+        const RESET_SENTINEL: u32 = 0xf0f0f0f0;
+
+        assert!(!self.locked(), "Debug registers must be unlocked");
+
         // Note: before enabling halt or monitor debug mode for the first time, all breakpoints and
         // watchpoints need to be explicitly set as either enabled or disabled.
 
         for idx in 0..self.capabilities.num_breakpoints {
             self.mmio
-                .modify_breakpoint_ctrl(idx.into(), |bkpt| bkpt.with_enabled(false))
+                .write_breakpoint_ctrl(idx.into(), BreakpointControl::DISABLED)
+                .unwrap();
+            self.mmio
+                .write_breakpoint_value(idx.into(), RESET_SENTINEL)
                 .unwrap();
         }
 
         for idx in 0..self.capabilities.num_watchpoints {
             self.mmio
-                .modify_watchpoint_ctrl(idx.into(), |wapt| wapt.with_enabled(false))
+                .write_watchpoint_ctrl(idx.into(), WatchpointControl::DISABLED)
+                .unwrap();
+            self.mmio
+                .write_watchpoint_value(idx.into(), RESET_SENTINEL)
                 .unwrap();
         }
 
@@ -156,7 +172,9 @@ impl HwBreakpointManager {
         specificity: Specificity,
         kind: ArmBreakpointKind,
     ) -> Result<(), BreakpointError> {
-        let (new_word, new_bas) = split_addr(addr, kind);
+        assert!(!self.locked(), "Debug registers must be unlocked");
+
+        let (new_word, new_bas) = split_addr(addr, kind)?;
 
         // First, try and find an existing breakpoint at the given word to avoid making a new one.
         // (This is possible for Thumb instructions, where 2 can be in the same word.)
@@ -221,7 +239,11 @@ impl HwBreakpointManager {
         specificity: Specificity,
         kind: ArmBreakpointKind,
     ) -> bool {
-        let (search_word, byte_address_select) = split_addr(addr, kind);
+        assert!(!self.locked(), "Debug registers must be unlocked");
+
+        let Ok((search_word, byte_address_select)) = split_addr(addr, kind) else {
+            return false;
+        };
 
         let mut anything_removed = false;
         for bkpt_index in 0..self.capabilities.num_breakpoints {
@@ -267,6 +289,27 @@ impl HwBreakpointManager {
         let status = self.mmio.read_status_control_ext();
         status.method_of_entry().ok()
     }
+
+    /// Indicates whether changes to hardware breakpoints (via MMIO) are disabled.
+    ///
+    /// This breakpoint manager abstraction will panic if MMIO is locked and a caller attempts to
+    /// make changes.
+    pub fn locked(&self) -> bool {
+        self.mmio.read_lock_status().software_lock_status()
+    }
+
+    /// Sets whether changes to hardware breakpoints (via MMIO) are disabled.
+    pub fn set_locked(&mut self, locked: bool) {
+        if locked {
+            self.mmio.write_lock_access(0);
+        } else {
+            self.mmio.write_lock_access(DEBUG_UNLOCK_MAGIC);
+        }
+    }
+
+    pub unsafe fn mmio(&self) -> &MmioDebugLogic<'_> {
+        &self.mmio
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,7 +338,9 @@ impl Debug for HwBreakpointManager {
             .collect::<Vec<_>>();
 
         f.debug_struct("HwBreakpointManager")
+            .field("locked", &self.locked())
             .field("capabilities", &self.capabilities)
+            .field("used_breakpoints", &self.used_breakpoints)
             .field("mmio_ptr", &unsafe { self.mmio.ptr() })
             .field("bkpt_values", &bkpt_values)
             .field("bkpt_ctrls", &bkpt_ctrls)
@@ -305,7 +350,7 @@ impl Debug for HwBreakpointManager {
 
 /// Splits an address into the word containing it and the byte-address-select that would match
 /// the instruction's offset into the word.
-fn split_addr(addr: u32, kind: ArmBreakpointKind) -> (u32, u4) {
+fn split_addr(addr: u32, kind: ArmBreakpointKind) -> Result<(u32, u4), BreakpointError> {
     let word = addr & !0b11;
 
     // Specify which addresses inside the 4-byte breakpoint to match. Multi-byte instructions
@@ -314,7 +359,9 @@ fn split_addr(addr: u32, kind: ArmBreakpointKind) -> (u32, u4) {
         // The instruction spans 4 bytes, so the breakpoint needs to match over its the entire
         // 4-byte value: [0-3].
         ArmBreakpointKind::Arm32 => {
-            assert!(addr.is_multiple_of(4));
+            if !addr.is_multiple_of(4) {
+                return Err(BreakpointError::NotAlignedCorrectly);
+            }
             u4::new(0b1111)
         }
         // 16-bit Thumb address - match either addresses ending in [0-1] or [2-3], depending on
@@ -322,7 +369,9 @@ fn split_addr(addr: u32, kind: ArmBreakpointKind) -> (u32, u4) {
         // (Although 4-byte Thumb instructions are a thing, we can treat them the same as 2-byte
         // ones. See <Table C3-2> Effect of byte address selection on Breakpoint generation.)
         ArmBreakpointKind::Thumb16 | ArmBreakpointKind::Thumb32 => {
-            assert!(addr.is_multiple_of(2));
+            if !addr.is_multiple_of(2) {
+                return Err(BreakpointError::NotAlignedCorrectly);
+            }
             if addr.is_multiple_of(4) {
                 u4::new(0b0011)
             } else {
@@ -331,5 +380,5 @@ fn split_addr(addr: u32, kind: ArmBreakpointKind) -> (u32, u4) {
         }
     };
 
-    (word, byte_address_select)
+    Ok((word, byte_address_select))
 }

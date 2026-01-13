@@ -2,8 +2,7 @@
 #![cfg(target_arch = "arm")]
 
 use std::{
-    arch::asm,
-    sync::{Mutex, Once, OnceLock},
+    any::Any, arch::asm, sync::{Mutex, Once, OnceLock}
 };
 
 use crate::{
@@ -17,12 +16,12 @@ pub mod debugger;
 pub mod exception;
 pub mod gdb_target;
 pub mod instruction;
-pub(crate) mod regs;
+pub mod regs;
 pub mod transport;
 
 pub static DEBUGGER: OnceLock<Mutex<&mut dyn Debugger>> = OnceLock::new();
 
-pub unsafe trait Debugger: Send {
+pub unsafe trait Debugger: Send + Any {
     /// Initializes the debugger.
     fn initialize(&mut self) {}
 

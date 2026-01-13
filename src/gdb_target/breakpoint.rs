@@ -236,4 +236,6 @@ pub enum BreakpointError {
     AlreadyExists,
     /// There are no free breakpoint slots.
     NoSpace,
+    /// The specified breakpoint address is not aligned properly for the given instruction type.
+    NotAlignedCorrectly,
 }

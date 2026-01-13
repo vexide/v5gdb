@@ -125,7 +125,7 @@ impl<S: Transport> V5Debugger<S> {
     }
 }
 
-unsafe impl<S: Transport> Debugger for V5Debugger<S> {
+unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
     unsafe fn register_breakpoint(
         &mut self,
         addr: u32,
