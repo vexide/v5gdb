@@ -30,19 +30,10 @@ fn fib(n: u64) -> u64 {
 
 #[vexide::main(banner(enabled = false))]
 async fn main(_peripherals: Peripherals) {
-    let mut debugger = V5Debugger::new(StdioTransport::new());
+    v5gdb::install(V5Debugger::new(StdioTransport::new()));
 
-    let target = debugger.target();
-
-    target.hw_manager.set_locked(false);
-
-    println!("{:#x?}", &target.hw_manager);
-    target
-        .hw_manager
-        .add_breakpoint_at(0x3800_0020, Specificity::Match, ArmBreakpointKind::Arm32)
-        .unwrap();
-
-    println!("{:#x?}", &target.hw_manager);
+    println!("Hello, world");
+    v5gdb::breakpoint();
 
     let n = fib(black_box(40));
     println!("{n}");

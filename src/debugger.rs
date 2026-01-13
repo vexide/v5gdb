@@ -135,9 +135,13 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
     }
 
     unsafe fn handle_debug_event(&mut self, ctx: &mut DebugEventContext) {
+        let was_locked = self.target.hw_manager.locked();
+        self.target.hw_manager.set_locked(false);
+
         // Internal fixup breakpoints can skip all the normal debug loop logic once their side
         // effects are finished.
         if self.target.apply_fixup() {
+            self.target.hw_manager.set_locked(was_locked);
             return;
         }
         self.target.exception_ctx = Some(*ctx);
@@ -180,5 +184,7 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         }
 
         self.run_debug_console();
+
+        self.target.hw_manager.set_locked(was_locked);
     }
 }

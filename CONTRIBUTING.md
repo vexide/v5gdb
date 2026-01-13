@@ -65,6 +65,12 @@ If you are getting weird errors when you try connecting with GDB (or your robot 
 
 If you suspect there is an issue with the serial connection and you're not sure what GDB is really doing, run the command `set debug remote 1` which will start printing out all the communications between GDB and v5gdb in real-time.
 
+If you want a log of everything v5gdb is sending to GDB (e.g. to see panic messages or aborts or debugging `println!`s), you can connect like this:
+
+```
+target remote | cargo v5 t | tee out.log
+```
+
 ## Licensing
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed under the MIT and Apache-2.0 licenses, without any additional terms or conditions.

@@ -12,7 +12,10 @@ use crate::{
         breakpoint::BreakpointError,
     },
     regs::{
-        BreakpointControl, BreakpointType, DEBUG_UNLOCK_MAGIC, DebugEventReason, DebugID, DebugLogic, DebugROMAddress, DebugSelfAddressOffset, DebugStatusControl, DebugValid, DebugVersion, MmioDebugLogic, PrivilegeModeFilter, SecureDebugEnable, SecurityFilter, WatchpointControl
+        BreakpointControl, BreakpointType, DEBUG_UNLOCK_MAGIC, DebugEventReason, DebugID,
+        DebugLogic, DebugROMAddress, DebugSelfAddressOffset, DebugStatusControl, DebugValid,
+        DebugVersion, MmioDebugLogic, PrivilegeModeFilter, SecureDebugEnable, SecurityFilter,
+        WatchpointControl,
     },
 };
 
@@ -242,16 +245,18 @@ impl HwBreakpointManager {
         assert!(!self.locked(), "Debug registers must be unlocked");
 
         let Ok((search_word, byte_address_select)) = split_addr(addr, kind) else {
+            println!("\n\nNot aligned");
             return false;
         };
 
         let mut anything_removed = false;
         for bkpt_index in 0..self.capabilities.num_breakpoints {
-            let mut bkpt = self.mmio.read_breakpoint_ctrl(bkpt_index as usize).unwrap();
-            if !bkpt.enabled()
-                || bkpt.breakpoint_type() != Ok(specificity.into())
-                || bkpt.byte_address_select() != byte_address_select
-            {
+            // First, is this breakpoint referring to the target address and enabled?
+            let bkpt = self.mmio.read_breakpoint_ctrl(bkpt_index as usize).unwrap();
+            let is_enabled_and_cfged = bkpt.enabled()
+                && bkpt.breakpoint_type() == Ok(specificity.into())
+                && bkpt.byte_address_select() == byte_address_select;
+            if !is_enabled_and_cfged {
                 continue;
             }
 
@@ -263,9 +268,9 @@ impl HwBreakpointManager {
                 continue;
             }
 
-            bkpt.set_enabled(false);
+            // It is, so remove it.
             self.mmio
-                .write_breakpoint_ctrl(bkpt_index as usize, bkpt)
+                .write_breakpoint_ctrl(bkpt_index as usize, bkpt.with_enabled(false))
                 .unwrap();
 
             anything_removed = true;
@@ -308,6 +313,17 @@ impl HwBreakpointManager {
         } else {
             self.mmio.write_lock_access(DEBUG_UNLOCK_MAGIC);
         }
+    }
+
+    /// Run a function with the hardware debug system unlocked.
+    ///
+    /// The system's previous lock state will be restored when the function returns.
+    pub fn with_unlocked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let was_locked = self.locked();
+        self.set_locked(was_locked);
+        let ret = f(self);
+        self.set_locked(true);
+        ret
     }
 
     pub unsafe fn mmio(&self) -> &MmioDebugLogic<'_> {

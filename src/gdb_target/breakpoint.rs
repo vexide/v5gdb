@@ -139,6 +139,7 @@ impl HwBreakpoint for V5Target {
         addr: u32,
         kind: ArmBreakpointKind,
     ) -> TargetResult<bool, Self> {
+        println!("\nRemoving {addr}/{kind:?}");
         let did_remove = self
             .hw_manager
             .remove_breakpoint_at(addr, Specificity::Match, kind);
