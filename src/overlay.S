@@ -98,13 +98,9 @@ catch_debug_event:
     @ -- Handle exception --
     @ Pass it to our handler using the C ABI, fn(*mut DebugEventContext) -> ():
     mov r0, sp              @ Set param 0
-    sub sp, sp, #4          @ Align stack to 8 bytes
-    blx handle_debug_event  @ Actually call the function now
+    blx handle_debug_event  @ Actually call the function now (stack is already aligned correctly)
 
     @ -- Restore --
-
-    @ Undo stack alignment
-    add sp, sp, #4
 
     @ Saved program status
     pop {r0}
