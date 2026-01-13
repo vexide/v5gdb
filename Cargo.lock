@@ -605,7 +605,7 @@ dependencies = [
  "snafu",
  "vex-sdk",
  "vexide",
- "vexide-devices",
+ "vexide-devices 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "zynq7000",
 ]
 
@@ -652,13 +652,12 @@ dependencies = [
 [[package]]
 name = "vexide"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c993f1161bf2f4c852c4bd75e2eff95520d6cc03f3a366285ceb227783bd51e"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
 dependencies = [
  "vex-sdk",
  "vexide-async",
- "vexide-core",
- "vexide-devices",
+ "vexide-core 0.8.0 (git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack)",
+ "vexide-devices 0.8.0 (git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack)",
  "vexide-macro",
  "vexide-startup",
 ]
@@ -666,8 +665,7 @@ dependencies = [
 [[package]]
 name = "vexide-async"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "935d1076cb89580f928ad036a1cefe360201e4f1c47120c6e1b35fea5beb6afb"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
 dependencies = [
  "async-lock",
  "async-task",
@@ -681,6 +679,17 @@ name = "vexide-core"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd71ec659102e83112e80a652a119629e6a42ed6aa16281c94732f61e4021bd4"
+dependencies = [
+ "bitflags",
+ "futures-core",
+ "pin-project",
+ "vex-sdk",
+]
+
+[[package]]
+name = "vexide-core"
+version = "0.8.0"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
 dependencies = [
  "bitflags",
  "futures-core",
@@ -703,14 +712,29 @@ dependencies = [
  "smart-leds-trait",
  "snafu",
  "vex-sdk",
- "vexide-core",
+ "vexide-core 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "vexide-devices"
+version = "0.8.0"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
+dependencies = [
+ "bitflags",
+ "bytemuck",
+ "libm",
+ "mint",
+ "rgb",
+ "smart-leds-trait",
+ "snafu",
+ "vex-sdk",
+ "vexide-core 0.8.0 (git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack)",
 ]
 
 [[package]]
 name = "vexide-macro"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7318b7f3ac08c356b97ef661c7646d1e8bc9202039e2adc8203b582473c086ea"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -720,8 +744,7 @@ dependencies = [
 [[package]]
 name = "vexide-startup"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88adb3fa366c8242359e4276c347743e5b9cac1015bb5ef62e14b77b60d7940e"
+source = "git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack#5f57935e1d3f28b7c6b8365bd5d1fa12340c1cdc"
 dependencies = [
  "bitflags",
  "compile-time",
@@ -731,7 +754,7 @@ dependencies = [
  "vex-sdk",
  "vex-sdk-jumptable",
  "vex-sdk-mock",
- "vexide-core",
+ "vexide-core 0.8.0 (git+https://github.com/vexide/vexide.git?branch=refactor%2Fabort-stack)",
 ]
 
 [[package]]

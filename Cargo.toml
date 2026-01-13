@@ -4,21 +4,9 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "GDB-compatible debugger backend for the VEX V5 platform"
-authors = [
-    "Lewis McClelland <lewis@lewismcclelland.me>",
-    "Tropical"
-]
-categories = [
-    "development-tools::debugging",
-    "embedded",
-    "hardware-support"
-]
-keywords = [
-    "vex-v5",
-    "gdb",
-    "debugging",
-    "vexide",
-]
+authors = ["Lewis McClelland <lewis@lewismcclelland.me>", "Tropical"]
+categories = ["development-tools::debugging", "embedded", "hardware-support"]
+keywords = ["vex-v5", "gdb", "debugging", "vexide"]
 repository = "https://github.com/vexide/v5gdb"
 homepage = "https://internals.vexide.dev/technical/debugger"
 rust-version = "1.93"
@@ -44,10 +32,15 @@ arbitrary-int = "2.0.0"
 derive-mmio = "0.6.1"
 cortex-ar = { version = "0.3.0", features = ["critical-section-single-core"] }
 vex-sdk = "0.28.0"
-snafu = { version = "0.8.9", default-features = false, features = ["rust_1_81"] }
+snafu = { version = "0.8.9", default-features = false, features = [
+    "rust_1_81",
+] }
 vexide-devices = { version = "0.8.0", default-features = false }
 
 [dev-dependencies]
-vexide = { version = "0.8.0", features = ["full", "default-sdk"] }
+vexide = { git = "https://github.com/vexide/vexide.git", branch = "refactor/abort-stack", features = [
+    "full",
+    "default-sdk",
+] }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
