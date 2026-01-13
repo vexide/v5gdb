@@ -1,12 +1,11 @@
-use std::arch::asm;
+use std::{arch::asm, num::NonZeroUsize};
 
 use cortex_ar::{
     asm::{dsb, isb},
     register::Sctlr,
 };
 use critical_section::CriticalSection;
-use gdbstub::arch::Arch;
-use gdbstub_arch::arm::reg::{ArmCoreRegs, id::ArmCoreRegId};
+use gdbstub::arch::{Arch, RegId, Registers};
 
 pub mod hw;
 
@@ -16,11 +15,11 @@ pub enum ArmV7 {}
 impl Arch for ArmV7 {
     type Usize = u32;
     type BreakpointKind = ArmBreakpointKind;
-    type RegId = ArmCoreRegId;
-    type Registers = ArmCoreRegs;
+    type RegId = ArmRegisterID;
+    type Registers = ArmRegisters;
 
     fn target_description_xml() -> Option<&'static str> {
-        Some(include_str!("arch/target.xml"))
+        Some(include_str!("arch/target.full.xml"))
     }
 }
 
@@ -47,6 +46,134 @@ impl gdbstub::arch::BreakpointKind for ArmBreakpointKind {
             _ => return None,
         };
         Some(kind)
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ArmRegisters {
+    /// General purpose registers (R0-R12)
+    pub r: [u32; 13],
+    /// Stack Pointer (R13)
+    pub sp: u32,
+    /// Link Register (R14)
+    pub lr: u32,
+    /// Program Counter (R15)
+    pub pc: u32,
+    /// Current Program Status Register (cpsr)
+    pub cpsr: u32,
+    /// Floating-point/SIMD registers (d0-d31)
+    pub d: [u64; 32],
+    /// Floating-point status and control register
+    pub fpscr: u32,
+}
+
+impl Registers for ArmRegisters {
+    type ProgramCounter = u32;
+
+    fn pc(&self) -> Self::ProgramCounter {
+        self.pc
+    }
+
+    fn gdb_serialize(&self, mut write_byte: impl FnMut(Option<u8>)) {
+        let mut send = move |bytes: &[u8]| {
+            for &b in bytes {
+                write_byte(Some(b));
+            }
+        };
+
+        for r in self.r {
+            send(&r.to_le_bytes());
+        }
+
+        send(&self.sp.to_le_bytes());
+        send(&self.lr.to_le_bytes());
+        send(&self.pc.to_le_bytes());
+        send(&self.cpsr.to_le_bytes());
+
+        for d in self.d {
+            send(&d.to_le_bytes());
+        }
+
+        send(&self.fpscr.to_le_bytes());
+    }
+
+    fn gdb_deserialize(&mut self, mut bytes: &[u8]) -> Result<(), ()> {
+        fn read<const N: usize>(bytes: &mut &[u8]) -> Result<[u8; N], ()> {
+            let Some((left, right)) = bytes.split_at_checked(N) else {
+                return Err(());
+            };
+            *bytes = right;
+
+            Ok(<[u8; N]>::try_from(left).unwrap())
+        }
+
+        for r in &mut self.r {
+            *r = u32::from_le_bytes(read(&mut bytes)?);
+        }
+
+        self.sp = u32::from_le_bytes(read(&mut bytes)?);
+        self.lr = u32::from_le_bytes(read(&mut bytes)?);
+        self.pc = u32::from_le_bytes(read(&mut bytes)?);
+        self.cpsr = u32::from_le_bytes(read(&mut bytes)?);
+
+        for d in &mut self.d {
+            *d = u64::from_le_bytes(read(&mut bytes)?);
+        }
+
+        self.fpscr = u32::from_le_bytes(read(&mut bytes)?);
+
+        Ok(())
+    }
+}
+
+/// 32-bit ARM register identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmRegisterID {
+    /// General purpose registers (R0-R12)
+    Gpr(u8),
+    /// Stack Pointer (R13)
+    Sp,
+    /// Link Register (R14)
+    Lr,
+    /// Program Counter (R15)
+    Pc,
+    /// Current Program Status Register (cpsr)
+    Cpsr,
+    /// Floating-point/SIMD registers (F0-F31)
+    Fpr(u8),
+    /// Floating point status and control register
+    Fpscr,
+}
+
+impl ArmRegisterID {
+    #[must_use]
+    const fn size(self) -> NonZeroUsize {
+        NonZeroUsize::new(match self {
+            Self::Gpr(_) => size_of::<u32>(),
+            Self::Sp => size_of::<u32>(),
+            Self::Lr => size_of::<u32>(),
+            Self::Pc => size_of::<u32>(),
+            Self::Cpsr => size_of::<u32>(),
+            Self::Fpr(_) => size_of::<u64>(),
+            Self::Fpscr => size_of::<u32>(),
+        }).unwrap()
+    }
+}
+
+impl RegId for ArmRegisterID {
+    fn from_raw_id(id: usize) -> Option<(Self, Option<std::num::NonZeroUsize>)> {
+        let reg = match id {
+            0..=12 => Self::Gpr(id as u8),
+            13 => Self::Sp,
+            14 => Self::Lr,
+            15 => Self::Pc,
+            16 => Self::Cpsr,
+            17..=49 => Self::Fpr((id - 17) as u8),
+            50 => Self::Fpscr,
+            _ => return None,
+        };
+
+        Some((reg, Some(reg.size())))
     }
 }
 

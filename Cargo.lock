@@ -227,16 +227,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gdbstub_arch"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22dde0e1b68787036ccedd0b1ff6f953527a0e807e571fbe898975203027278f"
-dependencies = [
- "gdbstub",
- "num-traits",
-]
-
-[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -612,7 +602,6 @@ dependencies = [
  "critical-section",
  "derive-mmio",
  "gdbstub",
- "gdbstub_arch",
  "snafu",
  "vex-sdk",
  "vexide",

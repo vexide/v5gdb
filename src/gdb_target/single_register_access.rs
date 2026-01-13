@@ -1,33 +1,39 @@
 use gdbstub::target::{
     TargetError, TargetResult, ext::base::single_register_access::SingleRegisterAccess,
 };
-use gdbstub_arch::arm::reg::id::ArmCoreRegId;
 
-use crate::{exception::ProgramStatus, gdb_target::V5Target};
+use crate::{exception::ProgramStatus, gdb_target::{V5Target, arch::ArmRegisterID}};
 
 impl SingleRegisterAccess<()> for V5Target {
     fn read_register(
         &mut self,
         _tid: (),
-        reg_id: ArmCoreRegId,
+        reg_id: ArmRegisterID,
         buf: &mut [u8],
     ) -> TargetResult<usize, Self> {
-        if let Some(ctx) = &mut self.exception_ctx {
-            let reg = match reg_id {
-                ArmCoreRegId::Gpr(rid) => ctx.registers.get(rid as usize).copied(),
-                ArmCoreRegId::Sp => Some(ctx.stack_pointer as u32),
-                ArmCoreRegId::Lr => Some(ctx.link_register as u32),
-                ArmCoreRegId::Pc => Some(ctx.program_counter as u32),
-                ArmCoreRegId::Cpsr => Some(ctx.spsr.0),
-                _ => None,
+        macro_rules! read_reg {
+            ($buf:ident, $num:expr) => {
+                {
+                    let bytes = $num.to_le_bytes();
+                    $buf.copy_from_slice(&bytes);
+                    Ok(bytes.len())
+                }
             };
+        }
 
-            if let Some(reg) = reg {
-                let bytes = reg.to_ne_bytes();
-                buf.copy_from_slice(&bytes);
-                Ok(bytes.len())
-            } else {
-                Ok(0)
+        if let Some(ctx) = &mut self.exception_ctx {
+            match reg_id {
+                ArmRegisterID::Gpr(rid) => {
+                    let Some(reg) = ctx.registers.get(rid as usize).copied() else {
+                        return Err(TargetError::NonFatal);
+                    };
+                    read_reg!(buf, reg)
+                },
+                ArmRegisterID::Sp => read_reg!(buf, ctx.stack_pointer),
+                ArmRegisterID::Lr => read_reg!(buf, ctx.link_register),
+                ArmRegisterID::Pc => read_reg!(buf, ctx.program_counter),
+                ArmRegisterID::Cpsr => read_reg!(buf, ctx.spsr.0),
+                _ => Err(TargetError::NonFatal),
             }
         } else {
             Err(TargetError::NonFatal)
@@ -37,27 +43,40 @@ impl SingleRegisterAccess<()> for V5Target {
     fn write_register(
         &mut self,
         _tid: (),
-        reg_id: ArmCoreRegId,
+        reg_id: ArmRegisterID,
         val: &[u8],
     ) -> TargetResult<(), Self> {
-        if let Some(ctx) = &mut self.exception_ctx
-            && let Ok(bytes) = val.try_into()
-        {
-            let val = u32::from_ne_bytes(bytes);
-
-            match reg_id {
-                ArmCoreRegId::Gpr(rid) => {
-                    let Some(storage) = ctx.registers.get_mut(rid as usize) else {
+        macro_rules! write_reg {
+            ($reg:expr, $ty:ty, $val:expr) => {
+                {
+                    let Ok(bytes) = $val.try_into() else {
                         return Err(TargetError::NonFatal);
                     };
 
-                    *storage = val;
+                    *$reg = <$ty>::from_le_bytes(bytes);
                 }
-                ArmCoreRegId::Sp => ctx.stack_pointer = val,
-                ArmCoreRegId::Lr => ctx.link_register = val,
-                ArmCoreRegId::Pc => ctx.program_counter = val,
-                ArmCoreRegId::Cpsr => ctx.spsr = ProgramStatus(val),
-                _ => return Err(TargetError::NonFatal),
+            };
+        }
+
+        if let Some(ctx) = &mut self.exception_ctx {
+            match reg_id {
+                ArmRegisterID::Gpr(rid) => {
+                    let Some(reg) = ctx.registers.get_mut(rid as usize) else {
+                        return Err(TargetError::NonFatal);
+                    };
+                    write_reg!(reg, u32, val)
+                },
+                ArmRegisterID::Sp => write_reg!(&mut ctx.stack_pointer, u32, val),
+                ArmRegisterID::Lr => write_reg!(&mut ctx.link_register, u32, val),
+                ArmRegisterID::Pc => write_reg!(&mut ctx.program_counter, u32, val),
+                ArmRegisterID::Cpsr => write_reg!(&mut ctx.spsr.0, u32, val),
+                ArmRegisterID::Fpr(rid) => {
+                    let Some(reg) = ctx.vfp_registers.get_mut(rid as usize) else {
+                        return Err(TargetError::NonFatal);
+                    };
+                    write_reg!(reg, u64, val)
+                },
+                ArmRegisterID::Fpscr => write_reg!(&mut ctx.fpscr, u32, val),
             }
 
             Ok(())

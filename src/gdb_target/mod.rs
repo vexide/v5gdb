@@ -17,7 +17,6 @@ use gdbstub::{
         },
     },
 };
-use gdbstub_arch::arm::reg::ArmCoreRegs;
 use zynq7000::devcfg::{DevCfg, MmioDevCfg};
 
 use crate::{
@@ -25,8 +24,7 @@ use crate::{
     exception::{DebugEventContext, ProgramStatus},
     gdb_target::{
         arch::{
-            ArmBreakpointKind, ArmV7,
-            hw::{HwBreakpointManager, Specificity},
+            ArmBreakpointKind, ArmRegisters, ArmV7, hw::{HwBreakpointManager, Specificity}
         },
         breakpoint::{BreakpointError, SWBreakpoint},
     },
@@ -225,14 +223,16 @@ impl Target for V5Target {
 }
 
 impl SingleThreadBase for V5Target {
-    fn read_registers(&mut self, regs: &mut <ArmV7 as Arch>::Registers) -> TargetResult<(), Self> {
+    fn read_registers(&mut self, regs: &mut ArmRegisters) -> TargetResult<(), Self> {
         if let Some(ctx) = &mut self.exception_ctx {
-            *regs = ArmCoreRegs {
+            *regs = ArmRegisters {
                 r: ctx.registers,
-                cpsr: ctx.spsr.0,
-                lr: ctx.link_register as u32,
-                pc: ctx.program_counter as u32,
-                sp: ctx.stack_pointer as u32,
+                sp: ctx.stack_pointer,
+                lr: ctx.link_register,
+                pc: ctx.program_counter,
+                d: ctx.vfp_registers,
+                fpscr: ctx.fpscr,
+                cpsr: ctx.spsr.to_raw(),
             };
         } else {
             return Err(TargetError::NonFatal);
@@ -244,13 +244,13 @@ impl SingleThreadBase for V5Target {
     fn write_registers(&mut self, regs: &<ArmV7 as Arch>::Registers) -> TargetResult<(), Self> {
         if let Some(ctx) = &mut self.exception_ctx {
             *ctx = DebugEventContext {
-                _pad: 0,
                 registers: regs.r,
-                spsr: ProgramStatus(regs.cpsr),
+                stack_pointer: regs.sp,
                 link_register: regs.lr,
                 program_counter: regs.pc,
-                stack_pointer: regs.sp,
-                // ..*ctx
+                spsr: ProgramStatus(regs.cpsr),
+                vfp_registers: regs.d,
+                fpscr: regs.fpscr,
             };
         } else {
             return Err(TargetError::NonFatal);

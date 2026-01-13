@@ -37,7 +37,6 @@ compress = true
 
 [dependencies]
 gdbstub = "0.7.8"
-gdbstub_arch = "0.3.2"
 zynq7000 = "0.1.1"
 critical-section = "1.2.0"
 bitbybit = "1.4.0"

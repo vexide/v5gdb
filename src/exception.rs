@@ -2,81 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{DEBUGGER, instruction::Instruction};
 
-core::arch::global_asm!(
-    r#"
-.text
-.arm
-.align 5
-.global debugger_vector_table
-
-debugger_vector_table:
-    ldr pc, original_vector_addresses+0 @ reset
-    ldr pc, original_vector_addresses+4
-    ldr pc, original_vector_addresses+8
-    b prefetch_abort_proxy
-    ldr pc, original_vector_addresses+16
-    nop
-    ldr pc, original_vector_addresses+24
-    ldr pc, original_vector_addresses+28
-
-original_vector_addresses: .word 0, 0, 0, 0, 0, 0, 0, 0
-
-prefetch_abort_proxy:
-    dsb @ Workaround for Cortex-A9 erratum (id 775420)
-
-    @ check if the exception is a debug event
-    push {{r0}}
-    mrc p15, 0, r0, c5, c0, 1 @ r0 <- IFSR
-    and r0, #0b1111
-    cmp r0, #0b00010
-    pop {{r0}}
-
-    ldrne pc, original_vector_addresses+12 @ not a debug event, use the original vector
-
-
-
-    @ Apply an offset to link register so that it points at address of return
-    @ instruction (see Abort::program_counter docs).
-    sub lr, #4
-
-    @ -- Save --
-    @ Create a DebugEventContext struct on the stack.
-    @ 1. Save general purpose registers for debugging and exception return
-    push {{r0-r12, lr}}
-
-    @ 2. Add secondary details: exception type and other debug info
-    mov r0, 2
-    push {{r0}}
-
-    @ Store original SYS-mode stack pointer and link register for debug
-    stmdb sp, {{sp,lr}}^
-    @ Adjust our sp, since we can't use writeback on stmdb SYS
-    sub sp, sp, #8
-
-    @ 3. Save the caller's prog. status reg. in case a recursive exception happens.
-    @ Note that this also helps align the stack to 8.
-    mrs r0, spsr
-    push {{r0}}
-
-    @ -- Handle exception --
-    @ Pass it to our handler using the C ABI, fn(*mut DebugEventContext) -> ():
-    mov r0, sp                    @ set param 0
-    blx handle_debug_event        @ Actually call the function now
-
-    @ -- Restore --
-    @ Restore spsr in case it was changed.
-    pop {{r0}}
-    msr spsr, r0
-
-    @ Our exception handler wouldn't have modified anything in SYS-mode,
-    @ so we can just discard that stuff. Also discard the exception type.
-    add sp, sp, #12
-
-    @ And... perform an exception return by loading the old LR into PC.
-    @ Note that we've already offset LR as required to point to the correct address.
-    ldm sp!, {{r0-r12, pc}}^
-    "#,
-);
+core::arch::global_asm!(include_str!("./overlay.S"), options(raw));
 
 #[unsafe(no_mangle)]
 #[instruction_set(arm::a32)]
@@ -152,7 +78,10 @@ pub struct DebugEventContext {
     /// The link register from before the exception.
     pub link_register: u32,
 
-    pub _pad: u32,
+    /// Floating point status and control register.
+    pub fpscr: u32,
+    /// Floating point registers d0 through d31
+    pub vfp_registers: [u64; 32],
 
     /// Registers r0 through r12
     pub registers: [u32; 13],
@@ -222,6 +151,11 @@ impl DebugEventContext {
 pub struct ProgramStatus(pub u32);
 
 impl ProgramStatus {
+    #[must_use]
+    pub const fn to_raw(self) -> u32 {
+        self.0
+    }
+
     /// Returns whether the CPU state has a 16-bit instruction set enabled (Thumb or ThumbEE).
     #[must_use]
     pub const fn is_thumb(self) -> bool {
