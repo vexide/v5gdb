@@ -173,8 +173,12 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
             // reads.
             let instr = unsafe { ctx.read_instr() };
             ctx.program_counter += instr.size() as u32;
-        } else {
-            // Otherwise, this is a managed breakpoint, which means we need to temporarily disable
+        }
+
+        self.run_debug_console();
+
+        if !is_manual_bkpt {
+            // This is a managed breakpoint, which means we need to temporarily disable
             // it so that we can continue execution when the debug console exits.
             self.target.prepare_for_continue(Breakpoint {
                 addr: ctx.program_counter,
@@ -182,8 +186,6 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
                 is_hardware: reason == Some(DebugEventReason::Breakpoint),
             });
         }
-
-        self.run_debug_console();
 
         self.target.hw_manager.set_locked(was_locked);
     }

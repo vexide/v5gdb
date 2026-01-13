@@ -133,6 +133,7 @@ impl HwBreakpointManager {
                 .write_breakpoint_value(idx.into(), RESET_SENTINEL)
                 .unwrap();
         }
+        self.used_breakpoints = [false; 16];
 
         for idx in 0..self.capabilities.num_watchpoints {
             self.mmio
@@ -187,7 +188,12 @@ impl HwBreakpointManager {
             let existing_bkpt = self.mmio.read_breakpoint_ctrl(idx as usize).unwrap();
             let existing_word = self.mmio.read_breakpoint_value(idx as usize).unwrap();
 
-            if !existing_bkpt.enabled() && next_disabled_idx.is_none() {
+            // Look for breakpoints that are both paused (!enabled) and not in use.
+            // Breakpoints
+            if !existing_bkpt.enabled()
+                && !self.used_breakpoints[idx as usize]
+                && next_disabled_idx.is_none()
+            {
                 next_disabled_idx = Some(idx as usize);
             }
 
