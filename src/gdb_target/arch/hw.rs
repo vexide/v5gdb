@@ -280,7 +280,10 @@ impl HwBreakpointManager {
 
     #[must_use]
     pub fn breakpoints_available(&self) -> u8 {
-        self.used_breakpoints.iter().filter(|&&e| e).count() as u8
+        let breaks_used = self.used_breakpoints.iter().filter(|&&e| e).count() as u8;
+        let total_breaks = self.capabilities.num_breakpoints;
+
+        total_breaks - breaks_used
     }
 
     /// Returns the reason why the most recent debug event was triggered.
