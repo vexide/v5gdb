@@ -7,6 +7,8 @@ use cortex_ar::{
 use critical_section::CriticalSection;
 use gdbstub::arch::{Arch, RegId, Registers};
 
+use crate::regs::mem::{DomainAccessControlRegister, DomainPermission};
+
 pub mod hw;
 
 /// The ARMv7 architecture.
@@ -177,46 +179,27 @@ impl RegId for ArmRegisterID {
     }
 }
 
-/// Temporarily disable MMU protections, execute a function in a critical section, then restore
-/// previous state.
+/// Temporarily disable MMU permission checks, execute a function in a critical section,
+/// then restore previous state.
 ///
-/// # Safety
-///
-/// This works by disabling the MMU and data-cache to make all memory behave like device memory, but
-/// there might still be a dirty cache left over for the memory you are accessing. Therefore, the
-/// caller must take care to clean any possible dirty d-cache before accessing any memory.
+/// Since a misbehaving program could corrupt device configuration, VEXos protects some lower-level
+/// config registers against accidental writes. This function can be used as a marker for
+/// "This memory is being accessed intentionally."
 #[inline]
-unsafe fn access_protected_mmio<T>(_cs: CriticalSection<'_>, inner: impl FnOnce() -> T) -> T {
-    // FIQs should be off too since their handlers might expect the MMU to work properly.
-    unsafe {
-        asm!("cpsid f", options(nomem, nostack, preserves_flags));
-    }
-
-    let orig_sctlr = Sctlr::read();
-
-    // Wait for pending writes to finish before updating MMU.
-    dsb();
-
-    Sctlr::write(
-        orig_sctlr
-            .with_m(false) // No MMU
-            .with_c(false), // No d-cache (write directly to device memory)
-    );
-    // Wait for SCTLR update to finish.
-    isb();
+pub fn access_protected_mmio<T>(_cs: CriticalSection<'_>, inner: impl FnOnce() -> T) -> T {
+    // Each VMSA region is assigned a domain from 0-15. When a memory access happens, it reads this
+    // register to decide whether or not a permission check should be done. If the domain assigned
+    // to the given memory region is in Manager mode, no permission check is done.
+    let domain_access = DomainAccessControlRegister::read();
+    domain_access.set_all(DomainPermission::Manager).write();
+    isb(); // Wait for domain permissions change to finish.
 
     let res = inner();
-    // Wait for device memory to be finished updating.
-    dsb();
+    dsb(); // Wait for device memory changes to finish.
 
-    Sctlr::write(orig_sctlr);
-    // Wait for SCTLR update to finish.
-    isb();
-
-    // Re-enable FIQs
-    unsafe {
-        asm!("cpsie f", options(nomem, nostack, preserves_flags));
-    }
+    // Restore previous state.
+    domain_access.write();
+    isb(); // Wait for domain permissions change to finish.
 
     res
 }

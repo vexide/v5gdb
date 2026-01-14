@@ -7,6 +7,8 @@ use std::arch::asm;
 use arbitrary_int::*;
 use bitbybit::{bitenum, bitfield};
 
+pub mod mem;
+
 /// Returns the (CRn, CRm, opc2) arguments that would be required to access the given debug register
 /// via the CPU's CP14 interface.
 ///
