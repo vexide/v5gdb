@@ -12,23 +12,23 @@ use gdbstub::{
                 single_register_access::SingleRegisterAccessOps,
                 singlethread::{SingleThreadBase, SingleThreadResumeOps},
             },
-            breakpoints::{BreakpointsOps, SwBreakpoint},
+            breakpoints::BreakpointsOps,
             monitor_cmd::MonitorCmdOps,
         },
     },
 };
-use zynq7000::devcfg::{DevCfg, MmioDevCfg};
+use zynq7000::devcfg::MmioDevCfg;
 
 use crate::{
     cache,
     exception::{DebugEventContext, ProgramStatus},
     gdb_target::{
         arch::{
-            ArmBreakpointKind, ArmRegisters, ArmV7, hw::{HwBreakpointManager, Specificity}
+            ArmBreakpointKind, ArmRegisters, ArmV7,
+            hw::{HwBreakpointManager, Specificity},
         },
         breakpoint::{BreakpointError, SWBreakpoint},
     },
-    instruction::Instruction,
 };
 
 pub mod arch;

@@ -1,8 +1,7 @@
-use std::{arch::asm, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 use cortex_ar::{
     asm::{dsb, isb},
-    register::Sctlr,
 };
 use critical_section::CriticalSection;
 use gdbstub::arch::{Arch, RegId, Registers};

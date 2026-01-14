@@ -2,13 +2,12 @@
 #![cfg(target_arch = "arm")]
 
 use std::{
-    any::Any, arch::asm, sync::{Mutex, Once, OnceLock}
+    any::Any, arch::asm, sync::{Mutex, OnceLock}
 };
 
 use crate::{
     exception::{DebugEventContext, install_vectors},
     gdb_target::breakpoint::BreakpointError,
-    transport::{StdioTransport, Transport},
 };
 
 pub mod cache;

@@ -12,7 +12,7 @@ use zynq7000::devcfg::DevCfg;
 use crate::{
     Debugger,
     exception::DebugEventContext,
-    gdb_target::{Breakpoint, SingleStepRequest, V5Target, arch::hw::Specificity},
+    gdb_target::{V5Target, arch::hw::Specificity},
     regs::DebugEventReason,
     transport::Transport,
 };

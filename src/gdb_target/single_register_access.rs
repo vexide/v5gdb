@@ -2,7 +2,7 @@ use gdbstub::target::{
     TargetError, TargetResult, ext::base::single_register_access::SingleRegisterAccess,
 };
 
-use crate::{exception::ProgramStatus, gdb_target::{V5Target, arch::ArmRegisterID}};
+use crate::{gdb_target::{V5Target, arch::ArmRegisterID}};
 
 impl SingleRegisterAccess<()> for V5Target {
     fn read_register(
