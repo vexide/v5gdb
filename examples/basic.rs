@@ -1,15 +1,6 @@
-use std::{any::Any, convert::Infallible, hint::black_box, time::Duration};
+use std::hint::black_box;
 
-use v5gdb::{
-    DEBUGGER,
-    debugger::V5Debugger,
-    gdb_target::arch::{
-        ArmBreakpointKind,
-        hw::{HwBreakpointManager, Specificity},
-    },
-    transport::StdioTransport,
-};
-use vex_sdk::{vexSerialReadChar, vexTasksRun};
+use v5gdb::{debugger::V5Debugger, transport::StdioTransport};
 use vexide::prelude::*;
 
 #[inline(never)]

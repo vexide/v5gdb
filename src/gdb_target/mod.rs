@@ -23,11 +23,12 @@ use crate::{
     cache,
     exception::{DebugEventContext, ProgramStatus},
     gdb_target::{
-        arch::{
-            ArmBreakpointKind, ArmRegisters, ArmV7,
-            hw::{HwBreakpointManager, Specificity},
+        arch::{ArmBreakpointKind, ArmRegisters, ArmV7},
+        breakpoint::{
+            BreakpointError,
+            hardware::{HwBreakpointManager, Specificity},
+            software::SwBreakpoint,
         },
-        breakpoint::{BreakpointError, SWBreakpoint},
     },
 };
 
@@ -45,7 +46,7 @@ pub struct V5Target {
     pub resume: bool,
 
     /// The list of breakpoints.
-    pub breaks: [Option<SWBreakpoint>; 16],
+    pub breaks: [Option<SwBreakpoint>; 16],
     pub hw_manager: HwBreakpointManager,
     /// If set, breakpoints are being used to single step. Report any hardware breaks as single
     /// steps instead of normal breakpoints.

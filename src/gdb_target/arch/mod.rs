@@ -1,14 +1,10 @@
 use std::num::NonZeroUsize;
 
-use cortex_ar::{
-    asm::{dsb, isb},
-};
+use cortex_ar::asm::{dsb, isb};
 use critical_section::CriticalSection;
 use gdbstub::arch::{Arch, RegId, Registers};
 
 use crate::regs::mem::{DomainAccessControlRegister, DomainPermission};
-
-pub mod hw;
 
 /// The ARMv7 architecture.
 pub enum ArmV7 {}
@@ -20,7 +16,7 @@ impl Arch for ArmV7 {
     type Registers = ArmRegisters;
 
     fn target_description_xml() -> Option<&'static str> {
-        Some(include_str!("arch/target.full.xml"))
+        Some(include_str!("./target.full.xml"))
     }
 }
 
@@ -157,7 +153,8 @@ impl ArmRegisterID {
             Self::Cpsr => size_of::<u32>(),
             Self::Fpr(_) => size_of::<u64>(),
             Self::Fpscr => size_of::<u32>(),
-        }).unwrap()
+        })
+        .unwrap()
     }
 }
 

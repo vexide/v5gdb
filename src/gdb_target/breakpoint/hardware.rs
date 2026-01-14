@@ -2,10 +2,12 @@ use std::fmt::{self, Debug, Formatter};
 
 use arbitrary_int::*;
 use cortex_ar::cache::clean_and_invalidate_data_cache_line_to_poc;
+use gdbstub::target::{TargetResult, ext::breakpoints::HwBreakpoint};
 use zynq7000::devcfg::MmioDevCfg;
 
 use crate::{
     gdb_target::{
+        V5Target,
         arch::{ArmBreakpointKind, access_protected_mmio},
         breakpoint::BreakpointError,
     },
@@ -401,4 +403,36 @@ fn split_addr(addr: u32, kind: ArmBreakpointKind) -> Result<(u32, u4), Breakpoin
     };
 
     Ok((word, byte_address_select))
+}
+
+impl HwBreakpoint for V5Target {
+    fn add_hw_breakpoint(
+        &mut self,
+        addr: u32,
+        kind: ArmBreakpointKind,
+    ) -> TargetResult<bool, Self> {
+        if self.hw_manager.breakpoints_available() <= 1 {
+            // One hardware breakpoint should be saved for single stepping.
+            return Ok(false);
+        }
+
+        let result = self
+            .hw_manager
+            .add_breakpoint_at(addr, Specificity::Match, kind);
+
+        Ok(result.is_ok())
+    }
+
+    fn remove_hw_breakpoint(
+        &mut self,
+        addr: u32,
+        kind: ArmBreakpointKind,
+    ) -> TargetResult<bool, Self> {
+        println!("\nRemoving {addr}/{kind:?}");
+        let did_remove = self
+            .hw_manager
+            .remove_breakpoint_at(addr, Specificity::Match, kind);
+
+        Ok(did_remove)
+    }
 }

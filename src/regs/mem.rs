@@ -40,7 +40,9 @@ impl DomainAccessControlRegister {
     }
 
     pub fn write(self) {
-        unsafe { Self::write_raw(self.0); }
+        unsafe {
+            Self::write_raw(self.0);
+        }
     }
 }
 

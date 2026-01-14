@@ -2,7 +2,9 @@
 #![cfg(target_arch = "arm")]
 
 use std::{
-    any::Any, arch::asm, sync::{Mutex, OnceLock}
+    any::Any,
+    arch::asm,
+    sync::{Mutex, OnceLock},
 };
 
 use crate::{
@@ -35,11 +37,8 @@ pub unsafe trait Debugger: Send + Any {
     ///
     /// This function will return an error if there are no more free breakpoint slots or if
     /// the specified address already has a breakpoint on it.
-    unsafe fn register_breakpoint(
-        &mut self,
-        addr: u32,
-        thumb: bool,
-    ) -> Result<(), BreakpointError>;
+    unsafe fn register_breakpoint(&mut self, addr: u32, thumb: bool)
+    -> Result<(), BreakpointError>;
 
     /// A callback function which is run whenever a breakpoint is triggered.
     ///

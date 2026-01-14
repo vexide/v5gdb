@@ -2,7 +2,7 @@ use gdbstub::target::{
     TargetError, TargetResult, ext::base::single_register_access::SingleRegisterAccess,
 };
 
-use crate::{gdb_target::{V5Target, arch::ArmRegisterID}};
+use crate::gdb_target::{V5Target, arch::ArmRegisterID};
 
 impl SingleRegisterAccess<()> for V5Target {
     fn read_register(
@@ -12,13 +12,11 @@ impl SingleRegisterAccess<()> for V5Target {
         buf: &mut [u8],
     ) -> TargetResult<usize, Self> {
         macro_rules! read_reg {
-            ($buf:ident, $num:expr) => {
-                {
-                    let bytes = $num.to_le_bytes();
-                    $buf.copy_from_slice(&bytes);
-                    Ok(bytes.len())
-                }
-            };
+            ($buf:ident, $num:expr) => {{
+                let bytes = $num.to_le_bytes();
+                $buf.copy_from_slice(&bytes);
+                Ok(bytes.len())
+            }};
         }
 
         if let Some(ctx) = &mut self.exception_ctx {
@@ -28,7 +26,7 @@ impl SingleRegisterAccess<()> for V5Target {
                         return Err(TargetError::NonFatal);
                     };
                     read_reg!(buf, reg)
-                },
+                }
                 ArmRegisterID::Sp => read_reg!(buf, ctx.stack_pointer),
                 ArmRegisterID::Lr => read_reg!(buf, ctx.link_register),
                 ArmRegisterID::Pc => read_reg!(buf, ctx.program_counter),
@@ -47,15 +45,13 @@ impl SingleRegisterAccess<()> for V5Target {
         val: &[u8],
     ) -> TargetResult<(), Self> {
         macro_rules! write_reg {
-            ($reg:expr, $ty:ty, $val:expr) => {
-                {
-                    let Ok(bytes) = $val.try_into() else {
-                        return Err(TargetError::NonFatal);
-                    };
+            ($reg:expr, $ty:ty, $val:expr) => {{
+                let Ok(bytes) = $val.try_into() else {
+                    return Err(TargetError::NonFatal);
+                };
 
-                    *$reg = <$ty>::from_le_bytes(bytes);
-                }
-            };
+                *$reg = <$ty>::from_le_bytes(bytes);
+            }};
         }
 
         if let Some(ctx) = &mut self.exception_ctx {
@@ -65,7 +61,7 @@ impl SingleRegisterAccess<()> for V5Target {
                         return Err(TargetError::NonFatal);
                     };
                     write_reg!(reg, u32, val)
-                },
+                }
                 ArmRegisterID::Sp => write_reg!(&mut ctx.stack_pointer, u32, val),
                 ArmRegisterID::Lr => write_reg!(&mut ctx.link_register, u32, val),
                 ArmRegisterID::Pc => write_reg!(&mut ctx.program_counter, u32, val),
@@ -75,7 +71,7 @@ impl SingleRegisterAccess<()> for V5Target {
                         return Err(TargetError::NonFatal);
                     };
                     write_reg!(reg, u64, val)
-                },
+                }
                 ArmRegisterID::Fpscr => write_reg!(&mut ctx.fpscr, u32, val),
             }
 
