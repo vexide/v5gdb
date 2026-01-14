@@ -138,12 +138,6 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         let was_locked = self.target.hw_manager.locked();
         self.target.hw_manager.set_locked(false);
 
-        // Internal fixup breakpoints can skip all the normal debug loop logic once their side
-        // effects are finished.
-        if self.target.apply_fixup() {
-            self.target.hw_manager.set_locked(was_locked);
-            return;
-        }
         self.target.exception_ctx = Some(*ctx);
 
         let reason = self.target.hw_manager.last_break_reason();
@@ -176,16 +170,6 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         }
 
         self.run_debug_console();
-
-        if !is_manual_bkpt {
-            // This is a managed breakpoint, which means we need to temporarily disable
-            // it so that we can continue execution when the debug console exits.
-            self.target.prepare_for_continue(Breakpoint {
-                addr: ctx.program_counter,
-                is_thumb: ctx.spsr.is_thumb(),
-                is_hardware: reason == Some(DebugEventReason::Breakpoint),
-            });
-        }
 
         self.target.hw_manager.set_locked(was_locked);
     }

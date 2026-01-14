@@ -47,11 +47,7 @@ pub struct V5Target {
     /// The list of breakpoints.
     pub breaks: [Option<SWBreakpoint>; 16],
     pub hw_manager: HwBreakpointManager,
-    /// If set, the hardware breakpoint system is being used to register a callback to re-enable a
-    /// software breakpoint after continuing, so when a break occurs we should only run fixups
-    /// and continue.
-    pub breakpoint_pending_reenable: Option<Breakpoint>,
-    /// If set, nreakpoints are being used to single step. Report any hardware breaks as single
+    /// If set, breakpoints are being used to single step. Report any hardware breaks as single
     /// steps instead of normal breakpoints.
     pub single_step_request: Option<SingleStepRequest>,
 }
@@ -77,93 +73,9 @@ impl V5Target {
             exception_ctx: None,
             resume: false,
             breaks: [None; _],
-            breakpoint_pending_reenable: None,
             single_step_request: None,
             hw_manager: HwBreakpointManager::setup(devcfg),
         }
-    }
-
-    /// Temporarily disables the current breakpoint so that returning from it will continue
-    /// execution rather than re-triggering it immediately.
-    ///
-    /// This will also configure the processor to single-step one instruction, then re-enable the
-    /// specified breakpoint (if the specified breakpoint existed in the first place).
-    pub fn prepare_for_continue(&mut self, this_bkpt: Breakpoint) {
-
-        // Disabling the current breakpoint allows us to continue execution without immediately
-        // triggering it again.
-        let changes_made = if this_bkpt.is_hardware {
-            // FIXME: Thumb32 breakpoints decay to Thumb16 after they are used once.
-            // We need some way to look up the address of a breakpoint and see what the kind is.
-            let kind = if this_bkpt.is_thumb {
-                ArmBreakpointKind::Thumb16
-            } else {
-                ArmBreakpointKind::Arm32
-            };
-
-            self.hw_manager
-                .remove_breakpoint_at(this_bkpt.addr, Specificity::Match, kind)
-        } else {
-            self.remove_sw_breakpoint(this_bkpt.addr)
-        };
-
-        let exception_ctx = self
-            .exception_ctx
-            .as_ref()
-            .expect("The debugger target has no exception context set");
-
-        if !changes_made {
-            // The breakpoint doesn't exist (anymore), so don't try to re-enable it.
-            return;
-        }
-
-        // Create an internal single-step breakpoint that, when activated, will re-enable this
-        // breakpoint and promptly continue program execution. This is used to support persistent
-        // breakpoints, since returning from a breakpoint requires you to temporarily disable it
-        // (otherwise it would immediately trigger again).
-
-        let kind = if exception_ctx.spsr.is_thumb() {
-            ArmBreakpointKind::Thumb16
-        } else {
-            ArmBreakpointKind::Arm32
-        };
-
-        self.hw_manager
-            .add_breakpoint_at(exception_ctx.program_counter, Specificity::Mismatch, kind)
-            .expect("Failed to make fixup breakpoint");
-        self.breakpoint_pending_reenable = Some(this_bkpt);
-    }
-
-    /// Applies any pending breakpoint fixup operation.
-    ///
-    /// Returns whether any changes were made.
-    pub fn apply_fixup(&mut self) -> bool {
-        let Some(bkpt) = self.breakpoint_pending_reenable.take()
-        else {
-            return false;
-        };
-
-        if bkpt.is_hardware {
-            let kind = if bkpt.is_thumb {
-                ArmBreakpointKind::Thumb16
-            } else {
-                ArmBreakpointKind::Arm32
-            };
-
-            self.hw_manager
-                .add_breakpoint_at(bkpt.addr, Specificity::Match, kind)
-                .expect("Failed to re-enable breakpoint after continuing");
-        } else {
-            unsafe {
-                self.register_sw_breakpoint(
-                    bkpt.addr,
-                    bkpt.is_thumb,
-                )
-                .expect("Failed to re-enable breakpoint after continuing");
-            }
-        }
-
-        true
     }
 
     /// Clears the resume flag.
