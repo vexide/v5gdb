@@ -75,3 +75,51 @@ impl SingleRegisterAccess<()> for V5Target {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedRegister {
+    U32(u32),
+    U64(u64),
+}
+
+impl SavedRegister {
+    pub fn from_le_bytes(buf: &[u8]) -> Option<Self> {
+        if let Ok(array) = buf.try_into() {
+            Some(Self::U64(u64::from_le_bytes(array)))
+        } else if let Ok(array) = buf.try_into() {
+            Some(Self::U32(u32::from_le_bytes(array)))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn unwrap_u32(self) -> u32 {
+        match self {
+            Self::U32(val) => val,
+            Self::U64(_) => panic!("Expected u32"),
+        }
+    }
+    #[inline]
+    pub const fn unwrap_u64(self) -> u64 {
+        match self {
+            Self::U64(val) => val,
+            Self::U32(_) => panic!("Expected u64"),
+        }
+    }
+
+    #[inline]
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::U32(_) => size_of::<u32>(),
+            Self::U64(_) => size_of::<u64>(),
+        }
+    }
+
+    pub const fn write_to_buffer(self, buf: &mut [u8]) {
+        match self {
+            Self::U32(val) => buf.copy_from_slice(&val.to_le_bytes()),
+            Self::U64(val) => buf.copy_from_slice(&val.to_le_bytes()),
+        }
+    }
+}

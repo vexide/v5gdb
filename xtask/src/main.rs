@@ -149,6 +149,7 @@ fn build(target: FfiTarget, opts: Vec<String>) {
         FfiTarget::Pros => &[
             "--target=armv7a-vex-v5",
             "-Zbuild-std=core",
+            "-Fv5gdb/pros",
         ],
         FfiTarget::Vexcode => &[
             "--target=armv7a-none-eabi",

@@ -121,3 +121,43 @@ catch_debug_event:
     @ Note that we've already offset LR as required to point to the correct exception return
     @ address.
     ldm sp!, {r0-r12, pc}^
+
+@ overlay_irq_handler:
+@     @ We want to call the original IRQ handler, but then return *here* instead of to user code so
+@     @ that we can run our callback function.
+
+@     @ Save original return location & processor state (stack remains aligned to 8)
+@     push {lr}
+@     mrs lr, spsr
+@     push {lr}
+@     @ Original IRQ handler should remain in the same state until we're ready to switch back.
+@     mov spsr, cpsr
+
+@     @ Call the original IRQ handler.
+@     @ IRQ handlers are expected to return to LR - 4, so include an offset.
+@     mov lr, .Lafter_original_irq+4
+@     ldr pc, original_irq_addr
+
+@ .Lafter_original_irq:
+@     @ Now save state, run callbacks. The original IRQ handler probably did something similar, but
+@     @ already popped all its saved registers from the stack. Note that the stack stays aligned.
+@     push {r0-r3,r12}
+@     vpush {d16-d31}
+@     vpush {d0-d15}
+@     vmrs r0, fpscr
+@     push {r0}
+
+@     blx v5gdb_irq_callback
+
+@     @ And... back to user code. Pop everything from the stack and return.
+@     pop {r0}
+@     vmsr fpscr, r0
+@     vpop {d0-d15}
+@     vpop {d16-d31}
+@     pop {r0-r3,r12}
+
+@     pop {lr}
+@     msr spsr, lr
+@     pop {lr}
+@     @ IRQs must return to LR - 4.
+@     subs pc, lr, #4

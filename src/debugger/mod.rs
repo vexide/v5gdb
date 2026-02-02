@@ -22,6 +22,7 @@ use crate::{
     debugger::sdk::InternalBreakpoint,
     exceptions::DebugEventContext,
     gdb_target::{V5Target, breakpoint::hardware::Specificity},
+    sys::{DebuggerSystem, System},
     transport::TransportError,
 };
 
@@ -101,14 +102,23 @@ where
     S: Connection<Error = TransportError> + ConnectionExt + Send + 'static,
 {
     fn initialize(&self) {
-        self.state().register_internal_breakpoints();
+        let mut state = self.state();
+        state.register_internal_breakpoints();
+        System::initialize(&mut state.target);
         crate::sdk::competition::install_override();
     }
 
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) {
         let mut state = self.state();
-
+        // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
         state.target.set_breakpoints_ignored(true);
+
+        // We re-enable interrupts after the abort (so that UART works) but prevent the RTOS from
+        // preempting us. When the debugger is active, the system should appear paused.
+        System::suspend_preemption();
+        unsafe {
+            aarch32_cpu::interrupt::enable();
+        }
 
         let was_locked = state.target.hw_manager.locked();
         state.target.hw_manager.set_locked(false);
@@ -171,6 +181,14 @@ where
 
         state.target.hw_manager.set_locked(was_locked);
         state.target.set_breakpoints_ignored(false);
+
+        // After we return from the debug event handler, we want the RTOS to continue working, so
+        // we have to resume the system. It's probably best for the state restore code to be in
+        // a critical section though - it will reset interrupts to their old state anyway.
+        aarch32_cpu::interrupt::disable();
+        unsafe {
+            System::enable_preemption();
+        }
     }
 }
 

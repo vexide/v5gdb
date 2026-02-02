@@ -1,4 +1,6 @@
-use v5gdb::{debugger::V5Debugger, transport::StdioTransport};
+use std::time::Duration;
+
+use v5gdb::{DEBUGGER, debugger::V5Debugger, transport::StdioTransport};
 use vexide::prelude::*;
 
 #[inline(never)]
@@ -21,10 +23,7 @@ fn fib(n: u64) -> u64 {
 async fn main(_peripherals: Peripherals) {
     v5gdb::install(V5Debugger::new(StdioTransport));
 
-    println!("Hello, world");
-
-    v5gdb::breakpoint!();
-
-    let n = fib(40);
-    println!("{n}");
+    loop {
+        sleep(Duration::from_secs(1)).await;
+    }
 }

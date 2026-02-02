@@ -44,7 +44,7 @@ mod arm {
     use crate::{
         DEBUGGER,
         cpu::{exception::VectorBaseAddressRegister, instruction::Instruction},
-        exceptions::DebugEventContext,
+        exceptions::DebugEventContext, sys::{DebuggerSystem, System},
     };
 
     core::arch::global_asm!(include_str!("./overlay.S"), options(raw));
@@ -63,13 +63,15 @@ mod arm {
     /// # Safety
     ///
     /// Must be passed a debug event context that's valid for reads and writes and lives for the
-    /// duration of this function call.
+    /// duration of this function call. This function will re-enable interrupts.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
     #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) {
         unsafe {
-            core::arch::asm!("cpsie i"); // unmask IRQs
+
             DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx);
+
+            System::enable_preemption();
         }
     }
 

@@ -33,7 +33,7 @@ use crate::{
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
-    },
+    }, sys::{DebuggerSystem, System},
 };
 
 pub mod arch;
@@ -42,6 +42,7 @@ pub mod memory;
 pub mod monitor;
 pub mod resume;
 pub mod single_register_access;
+pub mod thread;
 
 /// Debugger state storage.
 pub struct V5Target {
@@ -165,7 +166,11 @@ impl Target for V5Target {
     type Error = Infallible;
 
     fn base_ops(&mut self) -> BaseOps<'_, Self::Arch, Self::Error> {
-        BaseOps::SingleThread(self)
+        if System::MULTITHREADED {
+            BaseOps::MultiThread(self)
+        } else {
+            BaseOps::SingleThread(self)
+        }
     }
 
     fn support_breakpoints(&mut self) -> Option<BreakpointsOps<'_, Self>> {
@@ -222,9 +227,7 @@ impl SingleThreadBase for V5Target {
     }
 
     fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
-        let success = memory::write_memory(start_addr, data);
-
-        if success {
+        if memory::write_memory(start_addr, data) {
             Ok(())
         } else {
             Err(TargetError::Errno(HostIoErrno::EFAULT as u8))

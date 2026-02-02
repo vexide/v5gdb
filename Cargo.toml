@@ -26,6 +26,8 @@ vex-sdk = "0.28.0"
 [features]
 default = ["alloc"]
 alloc = []
+freertos = []
+pros = ["freertos"]
 
 [profile.release]
 opt-level = "z"
@@ -46,6 +48,8 @@ gdbstub.workspace = true
 spin.workspace = true
 log = "0.4.29"
 vex-sdk.workspace = true
+cfg-if = "1.0.4"
+bytemuck = { version = "1.25.0", features = ["derive"] }
 
 [target."cfg(target_arch = \"arm\")".dependencies]
 zynq7000 = "0.1.1"
