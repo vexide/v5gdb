@@ -1,4 +1,4 @@
-use core::{mem::MaybeUninit, ptr};
+use core::{ffi::CStr, mem::MaybeUninit, ptr};
 
 use gdbstub::common::Tid;
 use spin::Mutex;
@@ -164,6 +164,20 @@ impl DebuggerSystem for FreeRtosSystem {
 
             Ok(())
         }
+    }
+
+    fn read_thread_name(tid: Tid, buf: &mut [u8]) -> Result<usize, SystemError> {
+        let task = scan_tasks()
+            .find(|task| task.xTaskNumber as usize == tid.get())
+            .ok_or(SystemError::NoSuchTid)?;
+
+        let name = unsafe { CStr::from_ptr(task.pcTaskName) };
+        let name_bytes = name.to_bytes();
+
+        let copy_len = name_bytes.len().min(buf.len());
+        buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+        Ok(copy_len)
     }
 }
 

@@ -2,13 +2,16 @@ use gdbstub::{
     common::Tid,
     target::{
         TargetError, TargetResult,
-        ext::base::{
-            multithread::{
-                MultiThreadBase, MultiThreadResume, MultiThreadResumeOps, MultiThreadSingleStep,
-                MultiThreadSingleStepOps,
+        ext::{
+            base::{
+                multithread::{
+                    MultiThreadBase, MultiThreadResume, MultiThreadResumeOps,
+                    MultiThreadSingleStep, MultiThreadSingleStepOps,
+                },
+                single_register_access::{SingleRegisterAccess, SingleRegisterAccessOps},
+                singlethread::SingleThreadBase,
             },
-            single_register_access::{SingleRegisterAccess, SingleRegisterAccessOps},
-            singlethread::SingleThreadBase,
+            thread_extra_info::{ThreadExtraInfo, ThreadExtraInfoOps},
         },
     },
 };
@@ -34,6 +37,10 @@ impl MultiThreadBase for V5Target {
 
     fn is_thread_alive(&mut self, tid: Tid) -> Result<bool, Self::Error> {
         Ok(System::thread_exists(tid))
+    }
+
+    fn support_thread_extra_info(&mut self) -> Option<ThreadExtraInfoOps<'_, Self>> {
+        Some(self)
     }
 
     fn read_registers(&mut self, regs: &mut ArmRegisters, tid: Tid) -> TargetResult<(), Self> {
@@ -145,5 +152,11 @@ impl MultiThreadSingleStep for V5Target {
         } else {
             unimplemented!("Can't single step a different task");
         }
+    }
+}
+
+impl ThreadExtraInfo for V5Target {
+    fn thread_extra_info(&self, tid: Tid, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        Ok(System::read_thread_name(tid, buf).unwrap_or(0))
     }
 }

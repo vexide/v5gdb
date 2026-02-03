@@ -59,4 +59,8 @@ impl DebuggerSystem for BareSystem {
     ) -> Result<(), SystemError> {
         Err(SystemError::NoSuchTid)
     }
+
+    fn read_thread_name(_tid: Tid, _buf: &mut [u8]) -> Result<usize, SystemError> {
+        Err(SystemError::NoSuchTid)
+    }
 }

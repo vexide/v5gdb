@@ -34,6 +34,7 @@ pub trait DebuggerSystem {
     fn current_thread() -> Tid;
     fn thread_exists(tid: Tid) -> bool;
     fn all_threads(handler: &mut dyn FnMut(Tid));
+    fn read_thread_name(tid: Tid, buf: &mut [u8]) -> Result<usize, SystemError>;
 
     fn read_registers(tid: Tid) -> Result<ArmRegisters, SystemError>;
     fn write_registers(registers: &ArmRegisters, tid: Tid) -> Result<(), SystemError>;
