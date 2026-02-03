@@ -5,7 +5,11 @@ use gdbstub::{
 };
 use snafu::Snafu;
 
-use crate::gdb_target::{V5Target, arch::{ArmRegisterID, ArmRegisters}, single_register_access::SavedRegister};
+use crate::gdb_target::{
+    V5Target,
+    arch::{ArmRegisterID, ArmRegisters},
+    single_register_access::SavedRegister,
+};
 
 pub mod bare;
 pub mod freertos;
@@ -33,10 +37,7 @@ pub trait DebuggerSystem {
 
     fn read_registers(tid: Tid) -> Result<ArmRegisters, SystemError>;
     fn write_registers(registers: &ArmRegisters, tid: Tid) -> Result<(), SystemError>;
-    fn read_single_register(
-        tid: Tid,
-        id: ArmRegisterID,
-    ) -> Result<SavedRegister, SystemError>;
+    fn read_single_register(tid: Tid, id: ArmRegisterID) -> Result<SavedRegister, SystemError>;
     fn write_single_register(
         tid: Tid,
         id: ArmRegisterID,

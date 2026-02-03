@@ -10,7 +10,7 @@ v5gdb_debugger_vector_table:
     @ original_vector_addresses array which stores the address of the entry we need.
     ldr pc, original_reset_addr @ Reset
     ldr pc, original_udf_addr   @ Undefined instruction
-    b overlay_svc_handler       @ Supervisor Call
+    ldr pc, original_svc_addr       @ Supervisor Call
     b prefetch_abort_handler    @ Prefetch abort
     b data_abort_handler        @ Data abort
     nop                         @ Not used
@@ -128,7 +128,8 @@ overlay_svc_handler:
     push {r0} @ Avoid overwriting registers from user code
 
     @ Are yields enabled?
-    ldrb r0, v5gdb_prevent_yields
+    ldr r0, =v5gdb_prevent_yields
+    ldrb r0, [r0]
     cmp r0, #0
 
     pop {r0}

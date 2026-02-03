@@ -21,9 +21,16 @@ fn fib(n: u64) -> u64 {
 
 #[vexide::main]
 async fn main(_peripherals: Peripherals) {
+    colored::control::set_override(true);
+    clang_log::init(log::Level::max(), "v5gdb(basic)");
+
     v5gdb::install(V5Debugger::new(StdioTransport));
+    v5gdb::breakpoint!();
 
     loop {
+        let num = 40;
+        let x = fib(num);
+        println!("{x}");
         sleep(Duration::from_secs(1)).await;
     }
 }

@@ -13,7 +13,7 @@ use gdbstub::{
     },
 };
 use snafu::Snafu;
-use spin::{Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once};
 use zynq7000::devcfg::DevCfg;
 
 use crate::{
@@ -106,6 +106,7 @@ where
         state.register_internal_breakpoints();
         System::initialize(&mut state.target);
         crate::sdk::competition::install_override();
+        log::debug!("Debugger initialized");
     }
 
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) {
@@ -119,6 +120,12 @@ where
         unsafe {
             aarch32_cpu::interrupt::enable();
         }
+
+        static BKPT_LOG: Once = Once::new();
+        BKPT_LOG.call_once(|| {
+            log::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
+            log::error!("Your program has been paused. Please connect a debugger.")
+        });
 
         let was_locked = state.target.hw_manager.locked();
         state.target.hw_manager.set_locked(false);

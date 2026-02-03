@@ -1,4 +1,16 @@
-use core::fmt::Write;
+use core::{fmt::Write, panic::PanicInfo};
+
+#[panic_handler]
+fn panic_handler(panic: &PanicInfo) -> ! {
+    let mut report = ErrorReport::begin();
+    _ = writeln!(report, "v5gdb {panic}");
+
+    loop {
+        unsafe {
+            vex_sdk::vexTasksRun();
+        }
+    }
+}
 
 pub struct ErrorReport {
     pub y_offset: i32,

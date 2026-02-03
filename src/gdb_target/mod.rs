@@ -33,7 +33,8 @@ use crate::{
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
-    }, sys::{DebuggerSystem, System},
+    },
+    sys::{DebuggerSystem, System},
 };
 
 pub mod arch;

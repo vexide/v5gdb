@@ -5,8 +5,6 @@
 use core::{
     arch::global_asm,
     ffi::{CStr, c_char, c_void},
-    fmt::Write,
-    panic::PanicInfo,
     ptr,
 };
 
@@ -17,8 +15,7 @@ use v5gdb::{
     transport::{StdioTransport, TransportError},
 };
 
-use crate::panic::ErrorReport;
-
+mod log;
 mod panic;
 
 /// A custom transport method for communicating with GDB.
@@ -126,6 +123,7 @@ impl ConnectionExt for TransportImpl {
 /// Install the debugger, communicating with GDB over the V5's USB serial port.
 #[unsafe(export_name = "v5gdb_install_stdio")]
 pub extern "C" fn install_stdio() {
+    self::log::init();
     static DEBUGGER: Once<V5Debugger<StdioTransport>> = Once::new();
     DEBUGGER.call_once(|| V5Debugger::new(StdioTransport));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
@@ -134,6 +132,7 @@ pub extern "C" fn install_stdio() {
 /// Install the debugger with a custom transport method for communicating with GDB.
 #[unsafe(export_name = "v5gdb_install_custom")]
 pub extern "C" fn install_custom(transport: TransportImpl) {
+    self::log::init();
     static DEBUGGER: Once<V5Debugger<TransportImpl>> = Once::new();
     DEBUGGER.call_once(|| V5Debugger::new(transport));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
@@ -143,18 +142,6 @@ pub extern "C" fn install_custom(transport: TransportImpl) {
 #[unsafe(export_name = "v5gdb_breakpoint")]
 pub extern "C" fn breakpoint() {
     v5gdb::breakpoint!();
-}
-
-#[panic_handler]
-fn panic_handler(panic: &PanicInfo) -> ! {
-    let mut report = ErrorReport::begin();
-    _ = writeln!(report, "v5gdb {panic}");
-
-    loop {
-        unsafe {
-            vex_sdk::vexTasksRun();
-        }
-    }
 }
 
 // In the VEX partner SDK, vexTasksRun is renamed to vexBackgroundProcessing.

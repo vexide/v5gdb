@@ -6,7 +6,9 @@ use spin::Mutex;
 use self::rtos::{TaskHandle_t, TaskStatus_t, UBaseType_t, eTaskState, pdFALSE};
 use crate::{
     gdb_target::{
-        V5Target, arch::{ArmRegisterID, ArmRegisters}, single_register_access::SavedRegister
+        V5Target,
+        arch::{ArmRegisterID, ArmRegisters},
+        single_register_access::SavedRegister,
     },
     sys::{DebuggerSystem, SystemError, freertos::rtos::SavedTaskContext},
 };
@@ -18,8 +20,7 @@ pub struct FreeRtosSystem {}
 impl DebuggerSystem for FreeRtosSystem {
     const MULTITHREADED: bool = true;
 
-    fn initialize(_target: &mut V5Target) {
-    }
+    fn initialize(_target: &mut V5Target) {}
 
     fn suspend_preemption() {
         rtos::vTaskSuspendAll();

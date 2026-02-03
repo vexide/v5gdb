@@ -44,7 +44,8 @@ pub(crate) mod arm {
     use crate::{
         DEBUGGER,
         cpu::{exception::VectorBaseAddressRegister, instruction::Instruction},
-        exceptions::DebugEventContext, sys::{DebuggerSystem, System},
+        exceptions::DebugEventContext,
+        sys::{DebuggerSystem, System},
     };
 
     core::arch::global_asm!(include_str!("./overlay.S"), options(raw));
@@ -72,7 +73,6 @@ pub(crate) mod arm {
     #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) {
         unsafe {
-
             DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx);
 
             System::enable_preemption();

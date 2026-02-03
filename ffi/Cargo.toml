@@ -12,3 +12,5 @@ v5gdb = { path = "../", default-features = false }
 gdbstub.workspace = true
 spin.workspace = true
 vex-sdk.workspace = true
+log = "0.4.29"
+owo-colors = "4.2.3"
