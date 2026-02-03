@@ -30,7 +30,7 @@ pub struct DebugEventContext {
 }
 
 #[cfg(target_arch = "arm")]
-mod arm {
+pub(crate) mod arm {
     use core::{
         arch::asm,
         array,
@@ -54,6 +54,10 @@ mod arm {
     #[repr(C, align(8))]
     struct AbortStack(MaybeUninit<[u8; const { ABORT_STACK_SIZE }]>);
     static mut ABORT_STACK: AbortStack = AbortStack(MaybeUninit::uninit());
+
+    /// When set to true and the vector table is installed, yields are ignored.
+    #[unsafe(export_name = "v5gdb_prevent_yields")]
+    pub static PREVENT_YIELDS: AtomicBool = AtomicBool::new(false);
 
     /// Handles a debug event.
     ///

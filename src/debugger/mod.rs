@@ -20,7 +20,7 @@ use crate::{
     Debugger,
     cpu::debug::DebugEventReason,
     debugger::sdk::InternalBreakpoint,
-    exceptions::DebugEventContext,
+    exceptions::{DebugEventContext, PREVENT_YIELDS},
     gdb_target::{V5Target, breakpoint::hardware::Specificity},
     sys::{DebuggerSystem, System},
     transport::TransportError,
@@ -183,12 +183,16 @@ where
         state.target.set_breakpoints_ignored(false);
 
         // After we return from the debug event handler, we want the RTOS to continue working, so
-        // we have to resume the system. It's probably best for the state restore code to be in
-        // a critical section though - it will reset interrupts to their old state anyway.
+        // we have to resume the system.
+        // FreeRTOS's context switching code will act up if it gets run in abort mode, so we have to
+        // temporarily suppress yields here -- it always saves and restores registers from system
+        // mode, which we're not in right now.
         aarch32_cpu::interrupt::disable();
+        PREVENT_YIELDS.store(true, Ordering::SeqCst);
         unsafe {
             System::enable_preemption();
         }
+        PREVENT_YIELDS.store(false, Ordering::SeqCst);
     }
 }
 

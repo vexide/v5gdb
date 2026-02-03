@@ -10,7 +10,7 @@ v5gdb_debugger_vector_table:
     @ original_vector_addresses array which stores the address of the entry we need.
     ldr pc, original_reset_addr @ Reset
     ldr pc, original_udf_addr   @ Undefined instruction
-    ldr pc, original_svc_addr   @ Supervisor Call
+    b overlay_svc_handler       @ Supervisor Call
     b prefetch_abort_handler    @ Prefetch abort
     b data_abort_handler        @ Data abort
     nop                         @ Not used
@@ -97,6 +97,7 @@ catch_debug_event:
     push {r0}
 
     @ -- Handle exception --
+
     @ Pass it to our handler using the C ABI, fn(*mut DebugEventContext) -> ():
     mov r0, sp              @ Set param 0
     blx v5gdb_handle_debug_event  @ Actually call the function now (stack is already aligned correctly)
@@ -121,6 +122,22 @@ catch_debug_event:
     @ Note that we've already offset LR as required to point to the correct exception return
     @ address.
     ldm sp!, {r0-r12, pc}^
+
+@ RTOS yield syscall handler
+overlay_svc_handler:
+    push {r0} @ Avoid overwriting registers from user code
+
+    @ Are yields enabled?
+    ldrb r0, v5gdb_prevent_yields
+    cmp r0, #0
+
+    pop {r0}
+
+    @ Enabled -- continue as normal
+    ldreq pc, original_svc_addr
+
+    @ Disabled -- ignore the yield attempt & return
+    movs pc, lr
 
 @ overlay_irq_handler:
 @     @ We want to call the original IRQ handler, but then return *here* instead of to user code so
