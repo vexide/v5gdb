@@ -1309,6 +1309,7 @@ dependencies = [
  "derive-mmio",
  "gdbstub",
  "log",
+ "owo-colors",
  "snafu",
  "spin",
  "vex-sdk",

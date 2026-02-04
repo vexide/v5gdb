@@ -1,7 +1,14 @@
+use core::{iter, str::FromStr};
+
 use gdbstub::target::ext::monitor_cmd::{ConsoleOutput, MonitorCmd};
+use log::LevelFilter;
 use vex_sdk::*;
 
-use crate::{gdb_target::V5Target, sdk::competition};
+use crate::{
+    gdb_target::V5Target,
+    sdk::competition,
+    sys::{DebuggerSystem, System},
+};
 
 const MONITOR_DESCRIPTION: &str =
     concat!("v5gdb debug server, version ", env!("CARGO_PKG_VERSION"),);
@@ -15,6 +22,7 @@ Monitor commands:
     comp (driver | auton | disabled)    Override competition mode.
     comp (none | fc | switch)           Override competition system.
     comp real                           Stop overriding competition state.
+    log [level]                         Set the current log level (off/trace/debug/info/warn/error).
     dbg break                           Show internal software breakpoint status.
     dbg hw                              Show internal hardware debug status.
 ";
@@ -122,9 +130,20 @@ impl MonitorCmd for V5Target {
                     }
                 }
             }
+            "log" => {
+                if let Some(level) = args.next()
+                 && let Ok(level) = LevelFilter::from_str(level) {
+                     log::set_max_level(level);
+                 } else {
+                    gdbstub::outputln!(out, "Expected off/trace/debug/info/warn/error.")
+                 }
+            }
+            "sys" => {
+                System::handle_monitor_cmd(args, &mut out);
+            }
             "?" | "h" | "help" => {
-                gdbstub::outputln!(out, "{MONITOR_DESCRIPTION}");
-                gdbstub::outputln!(out, "{HELP_MSG}");
+                gdbstub::outputln!(out, "{MONITOR_DESCRIPTION}\n{HELP_MSG}");
+                System::handle_monitor_cmd(iter::once("help"), &mut out);
             }
             _ => {
                 gdbstub::outputln!(out, "Unknown command. See 'monitor help' for more info.");

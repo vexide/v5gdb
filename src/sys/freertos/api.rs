@@ -8,7 +8,7 @@ use core::{
 use bytemuck::Zeroable;
 
 unsafe extern "C" {
-    pub unsafe static pxCurrentTCB: TaskHandle_t;
+    pub unsafe static mut pxCurrentTCB: TaskHandle_t;
 
     #[cfg_attr(feature = "pros", link_name = "rtos_suspend_all")]
     pub safe fn vTaskSuspendAll();
@@ -146,5 +146,4 @@ pub type StackType_t = u32;
 pub type BaseType_t = i32;
 pub type UBaseType_t = u32;
 
-pub const pdTRUE: i32 = 1;
 pub const pdFALSE: i32 = 0;

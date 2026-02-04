@@ -1,7 +1,10 @@
 use cfg_if::cfg_if;
 use gdbstub::{
     common::Tid,
-    target::{TargetError, ext::host_io::HostIoErrno},
+    target::{
+        TargetError,
+        ext::{host_io::HostIoErrno, monitor_cmd::ConsoleOutput},
+    },
 };
 use snafu::Snafu;
 
@@ -11,13 +14,12 @@ use crate::gdb_target::{
     single_register_access::SavedRegister,
 };
 
-pub mod bare;
-pub mod freertos;
-
 cfg_if! {
     if #[cfg(feature = "freertos")] {
+        pub mod freertos;
         pub type System = freertos::FreeRtosSystem;
     } else {
+        pub mod bare;
         pub type System = bare::BareSystem;
     }
 }
@@ -44,6 +46,10 @@ pub trait DebuggerSystem {
         id: ArmRegisterID,
         value: SavedRegister,
     ) -> Result<(), SystemError>;
+
+    fn handle_monitor_cmd<'a>(_args: impl Iterator<Item = &'a str>, out: &mut ConsoleOutput) {
+        gdbstub::outputln!(out, "This system doesn't support the `sys` subcommand.");
+    }
 }
 
 #[derive(Debug, Snafu, Clone, Copy)]

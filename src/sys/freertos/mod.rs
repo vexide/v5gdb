@@ -1,19 +1,20 @@
 use core::{ffi::CStr, mem::MaybeUninit, ptr};
 
-use gdbstub::common::Tid;
+use gdbstub::{common::Tid, target::ext::monitor_cmd::ConsoleOutput};
+use owo_colors::{OwoColorize, Style};
 use spin::Mutex;
 
-use self::rtos::{TaskHandle_t, TaskStatus_t, UBaseType_t, eTaskState, pdFALSE};
+use self::api::{TaskHandle_t, TaskStatus_t, UBaseType_t, eTaskState, pdFALSE};
 use crate::{
     gdb_target::{
         V5Target,
         arch::{ArmRegisterID, ArmRegisters},
         single_register_access::SavedRegister,
     },
-    sys::{DebuggerSystem, SystemError, freertos::rtos::SavedTaskContext},
+    sys::{DebuggerSystem, SystemError, freertos::api::SavedTaskContext},
 };
 
-mod rtos;
+mod api;
 
 pub struct FreeRtosSystem {}
 
@@ -23,11 +24,11 @@ impl DebuggerSystem for FreeRtosSystem {
     fn initialize(_target: &mut V5Target) {}
 
     fn suspend_preemption() {
-        rtos::vTaskSuspendAll();
+        api::vTaskSuspendAll();
     }
     unsafe fn enable_preemption() {
         unsafe {
-            rtos::xTaskResumeAll();
+            api::xTaskResumeAll();
         }
     }
 
@@ -42,7 +43,7 @@ impl DebuggerSystem for FreeRtosSystem {
     fn current_thread() -> Tid {
         let mut status = MaybeUninit::uninit();
         unsafe {
-            rtos::vTaskGetInfo(
+            api::vTaskGetInfo(
                 TaskHandle_t::CURRENT,
                 status.as_mut_ptr(),
                 pdFALSE,
@@ -179,7 +180,77 @@ impl DebuggerSystem for FreeRtosSystem {
 
         Ok(copy_len)
     }
+
+    fn handle_monitor_cmd<'a>(mut args: impl Iterator<Item = &'a str>, out: &mut ConsoleOutput) {
+        let cmd = args.next().unwrap_or("?");
+
+        match cmd {
+            "t" | "task" | "tasks" => {
+                gdbstub::outputln!(
+                    out,
+                    "  {:<3} {:<32} {:<10} {:<10} {:<10}",
+                    "Id",
+                    "Name",
+                    "State",
+                    "Priority",
+                    "Stack Remaining"
+                );
+
+                let current = unsafe { api::pxCurrentTCB };
+
+                for task in scan_tasks() {
+                    let marker = if task.xHandle == current { "*" } else { " " };
+                    let id = task.xTaskNumber;
+                    let name = unsafe { CStr::from_ptr(task.pcTaskName) };
+
+                    let state = match task.eCurrentState {
+                        eTaskState::BLOCKED => "Blocked".style(Style::new().yellow()),
+                        eTaskState::DELETED => "Deleted".style(Style::new().red()),
+                        eTaskState::READY => "Ready".style(Style::new().green()),
+                        eTaskState::RUNNING => "Running".style(Style::new().green().bold()),
+                        eTaskState::SUSPENDED => "Suspend".style(Style::new().magenta()),
+                        _ => "Unknown".style(Style::new().bright_black()),
+                    };
+
+                    let priority = task.uxCurrentPriority;
+                    let stack_rem = task.usStackHighWaterMark;
+
+                    gdbstub::outputln!(
+                        out,
+                        "{marker} {id:<3} {name:<32} {state:<10} {priority:<10} {stack_rem:<10}",
+                        name = name.to_str().unwrap_or("<Invalid UTF-8>"),
+                    );
+                }
+            }
+            "?" | "help" | "h" => {
+                gdbstub::outputln!(out, "v5gdb is configured for FreeRTOS{FREERTOS_FLAVOR}.");
+                gdbstub::outputln!(out, "{MONITOR_HELP}");
+            }
+            _ => {
+                gdbstub::outputln!(
+                    out,
+                    "Unknown command. See 'monitor sys help' for more info."
+                );
+            }
+        }
+    }
 }
+
+const FREERTOS_FLAVOR: &str = if cfg!(feature = "pros") {
+    " (PROS flavor)"
+} else {
+    ""
+};
+const MONITOR_HELP: &str = r#"FreeRTOS-specific commands:
+    sys help                            Show this help message.
+    sys tasks                           Lists the following details about each running task:
+                                        * Id: The unique task ID number.
+                                        * Name: Task name
+                                        * State: The scheduling state of the task.
+                                        * Priority: The scheduling priority of the task.
+                                        * Stack Remaining: The amount of bytes in the task's stack
+                                        which have never been used.
+"#;
 
 fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
     static TASK_ARRAY: Mutex<[MaybeUninit<TaskStatus_t>; 128]> =
@@ -187,7 +258,7 @@ fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
 
     let mut task_array = TASK_ARRAY.lock();
     let num_tasks = unsafe {
-        rtos::uxTaskGetSystemState(
+        api::uxTaskGetSystemState(
             task_array.as_mut_ptr().cast(),
             task_array.len() as UBaseType_t,
             ptr::null_mut(),
