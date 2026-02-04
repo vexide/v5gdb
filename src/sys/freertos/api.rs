@@ -94,22 +94,12 @@ impl TaskStatus_t {
 
     /// Returns a pointer to this task's saved task context, which is stored on the stack.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the saved context of the task does not have a floating-point
-    /// context.
-    ///
     /// # Safety
     ///
     /// The task's stack pointer must be valid and the task controlling it must not be in the
     /// [`eTaskState::RUNNING`] state.
     pub unsafe fn saved_context(&self) -> *mut SavedTaskContext {
-        let ctx = unsafe { *self.tcb_ptr() } as *mut SavedTaskContext;
-        assert!(
-            unsafe { (*ctx).ulPortTaskHasFPUContext != 0 },
-            "Only tasks with FP contexts are supported"
-        );
-        ctx
+        unsafe { *self.tcb_ptr() as *mut SavedTaskContext }
     }
 }
 

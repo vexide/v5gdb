@@ -62,7 +62,14 @@ impl DebuggerSystem for FreeRtosSystem {
         let task = lookup_saved_task(tid)?;
 
         // SAFETY: The task is valid and not running.
-        let ctx = unsafe { task.saved_context().read() };
+        let ctx = unsafe {
+            let ptr = task.saved_context();
+            assert!(
+                unsafe { (*ptr).ulPortTaskHasFPUContext != 0 },
+                "Only tasks with FP contexts are supported"
+            );
+            ptr.read()
+        };
 
         Ok(ArmRegisters {
             r: ctx.gp_registers,
@@ -83,6 +90,11 @@ impl DebuggerSystem for FreeRtosSystem {
 
             // SAFETY: The task is valid and not running.
             let ctx = task.saved_context();
+            assert!(
+                unsafe { (*ctx).ulPortTaskHasFPUContext != 0 },
+                "Only tasks with FP contexts are supported"
+            );
+
             ctx.write(SavedTaskContext {
                 ulPortTaskHasFPUContext: 1,
                 fpscr: registers.fpscr,
@@ -107,6 +119,10 @@ impl DebuggerSystem for FreeRtosSystem {
         }
 
         let ctx = unsafe { task.saved_context() };
+        assert!(
+            unsafe { (*ctx).ulPortTaskHasFPUContext != 0 },
+            "Only tasks with FP contexts are supported"
+        );
 
         unsafe {
             Ok(match id {
@@ -138,7 +154,13 @@ impl DebuggerSystem for FreeRtosSystem {
             unsafe {
                 // The task's registers are saved just below its stack. For state restoration to
                 // work, they have to remain in this predictable spot next to the new stack.
-                let old_ctx = task.saved_context().read();
+                let ptr = task.saved_context();
+                assert!(
+                    unsafe { (*ptr).ulPortTaskHasFPUContext != 0 },
+                    "Only tasks with FP contexts are supported"
+                );
+                let old_ctx = ptr.read();
+
                 task.set_sp(value.unwrap_u32());
                 task.saved_context().write(old_ctx);
             }

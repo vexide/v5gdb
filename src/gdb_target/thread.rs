@@ -85,6 +85,7 @@ impl MultiThreadBase for V5Target {
 
 impl MultiThreadResume for V5Target {
     fn clear_resume_actions(&mut self) -> Result<(), Self::Error> {
+        log::debug!("Setup resume");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
@@ -94,17 +95,37 @@ impl MultiThreadResume for V5Target {
         _tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
+        log::debug!("Resume action - continue");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
 
     fn resume(&mut self) -> Result<(), Self::Error> {
+        log::debug!("Commit resume");
         self.resume = true;
         Ok(())
     }
 
     fn support_single_step(&mut self) -> Option<MultiThreadSingleStepOps<'_, Self>> {
         Some(self)
+    }
+}
+
+impl MultiThreadSingleStep for V5Target {
+    fn set_resume_action_step(
+        &mut self,
+        tid: Tid,
+        _signal: Option<gdbstub::common::Signal>,
+    ) -> Result<(), Self::Error> {
+        log::warn!("Resume action for {tid:?} - current = {}", System::current_thread());
+        if tid == System::current_thread() {
+            log::debug!("Resume action - step");
+            self.setup_step().expect("Couldn't set up single step");
+            Ok(())
+        } else {
+            Ok(())
+            // unimplemented!("Can't single step a different task");
+        }
     }
 }
 
@@ -136,21 +157,6 @@ impl SingleRegisterAccess<Tid> for V5Target {
             let reg = SavedRegister::from_le_bytes(val).ok_or(TargetError::NonFatal)?;
             System::write_single_register(tid, reg_id, reg)?;
             Ok(())
-        }
-    }
-}
-
-impl MultiThreadSingleStep for V5Target {
-    fn set_resume_action_step(
-        &mut self,
-        tid: Tid,
-        _signal: Option<gdbstub::common::Signal>,
-    ) -> Result<(), Self::Error> {
-        if tid == System::current_thread() {
-            self.setup_step().expect("Couldn't set up single step");
-            Ok(())
-        } else {
-            unimplemented!("Can't single step a different task");
         }
     }
 }

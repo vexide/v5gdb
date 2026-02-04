@@ -8,8 +8,7 @@ use core::{
 use gdbstub::{
     conn::{Connection, ConnectionExt},
     stub::{
-        GdbStub, GdbStubBuilder, GdbStubError, SingleThreadStopReason,
-        state_machine::GdbStubStateMachine,
+        GdbStub, GdbStubBuilder, GdbStubError, MultiThreadStopReason, SingleThreadStopReason, state_machine::GdbStubStateMachine
     },
 };
 use snafu::Snafu;
@@ -121,6 +120,7 @@ where
             aarch32_cpu::interrupt::enable();
         }
 
+        log::debug!("Entered debug event handler");
         static BKPT_LOG: Once = Once::new();
         BKPT_LOG.call_once(|| {
             log::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
@@ -180,11 +180,15 @@ where
         }
 
         if show_debug_console {
+            log::debug!("Starting debug console");
             state.run_debug_console();
+            log::debug!("Debug console has exited");
         }
 
         // Write any modifications back to the stack so the assembly code restores the updated state
         *ctx = state.target.exception_ctx.clone();
+
+        log::debug!("Exiting debug event handler");
 
         state.target.hw_manager.set_locked(was_locked);
         state.target.set_breakpoints_ignored(false);
@@ -194,12 +198,12 @@ where
         // FreeRTOS's context switching code will act up if it gets run in abort mode, so we have to
         // temporarily suppress yields here -- it always saves and restores registers from system
         // mode, which we're not in right now.
-        aarch32_cpu::interrupt::disable();
-        PREVENT_YIELDS.store(true, Ordering::SeqCst);
-        unsafe {
-            System::enable_preemption();
-        }
-        PREVENT_YIELDS.store(false, Ordering::SeqCst);
+        // aarch32_cpu::interrupt::disable();
+        // PREVENT_YIELDS.store(true, Ordering::SeqCst);
+        // unsafe {
+        //     System::enable_preemption();
+        // }
+        // PREVENT_YIELDS.store(false, Ordering::SeqCst);
     }
 }
 
@@ -266,15 +270,18 @@ where
                 let reported_reason = target.get_stop_reason();
                 target.single_step_request = None;
 
+                log::warn!("Debugger Stop reason: {reported_reason:?}");
+
                 // Once we tell GDB we've exited we should exit the monitor because the session will
                 // end.
-                if matches!(reported_reason, SingleThreadStopReason::Exited(_)) {
+                if matches!(reported_reason, MultiThreadStopReason::Exited(_)) {
                     target.resume = true;
                 }
 
                 Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
+                log::warn!("Got Ctrl+C");
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }

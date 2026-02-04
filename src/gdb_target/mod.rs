@@ -5,7 +5,7 @@ use core::convert::Infallible;
 use gdbstub::{
     arch::Arch,
     common::Signal,
-    stub::SingleThreadStopReason,
+    stub::{MultiThreadStopReason, SingleThreadStopReason},
     target::{
         Target, TargetError, TargetResult,
         ext::{
@@ -136,9 +136,9 @@ impl V5Target {
         Ok(())
     }
 
-    pub fn get_stop_reason(&self) -> SingleThreadStopReason<u32> {
+    pub fn get_stop_reason(&self) -> MultiThreadStopReason<u32> {
         if self.exiting {
-            return SingleThreadStopReason::Exited(0);
+            return MultiThreadStopReason::Exited(0);
         }
 
         let reason = self.hw_manager.last_break_reason();
@@ -150,14 +150,14 @@ impl V5Target {
             // should be handle both? Right now, this logic will prioritize the single step,
             // but we might want it to be the other way around.
             if self.single_step_request.is_some() {
-                SingleThreadStopReason::DoneStep
+                MultiThreadStopReason::DoneStep
             } else {
-                SingleThreadStopReason::HwBreak(())
+                MultiThreadStopReason::HwBreak(System::current_thread())
             }
         } else {
             // GDB interprets this as a software breakpoint if there is one, but will halt
             // even if the user didn't explicitly set one.
-            SingleThreadStopReason::Signal(Signal::SIGTRAP)
+            MultiThreadStopReason::SwBreak(System::current_thread())
         }
     }
 }
