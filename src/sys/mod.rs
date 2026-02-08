@@ -30,8 +30,13 @@ pub trait DebuggerSystem {
 
     fn initialize(target: &mut V5Target);
 
+    // Resuming preemption is not included in this trait because it is already handled directly by
+    // the restore code in `overlay.S`.
+
+    /// Tell the system's scheduler to not preempt threads, even if interrupts are enabled.
+    ///
+    /// Calling this multiple times should stack so that an equal number of resumes are required.
     fn suspend_preemption();
-    unsafe fn enable_preemption();
 
     fn current_thread() -> Tid;
     fn thread_exists(tid: Tid) -> bool;

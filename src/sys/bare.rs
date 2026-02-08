@@ -18,8 +18,6 @@ impl DebuggerSystem for BareSystem {
 
     #[inline(always)]
     fn suspend_preemption() {}
-    #[inline(always)]
-    unsafe fn enable_preemption() {}
 
     #[inline(always)]
     fn current_thread() -> Tid {

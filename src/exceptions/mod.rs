@@ -48,17 +48,20 @@ pub(crate) mod arm {
         sys::{DebuggerSystem, System},
     };
 
-    core::arch::global_asm!(include_str!("./overlay.S"), options(raw));
+    core::arch::global_asm!(
+        #[cfg(feature = "freertos")]
+        ".set FREERTOS, 1",
+        #[cfg(feature = "pros")]
+        ".set PROS, 1",
+        include_str!("./overlay.S"),
+        options(raw),
+    );
 
     const ABORT_STACK_SIZE: usize = 0x8000; // 32KB
 
     #[repr(C, align(8))]
     struct AbortStack(MaybeUninit<[u8; const { ABORT_STACK_SIZE }]>);
     static mut ABORT_STACK: AbortStack = AbortStack(MaybeUninit::uninit());
-
-    /// When set to true and the vector table is installed, yields are ignored.
-    #[unsafe(export_name = "v5gdb_prevent_yields")]
-    pub static PREVENT_YIELDS: AtomicBool = AtomicBool::new(false);
 
     /// Handles a debug event.
     ///
@@ -68,14 +71,17 @@ pub(crate) mod arm {
     /// # Safety
     ///
     /// Must be passed a debug event context that's valid for reads and writes and lives for the
-    /// duration of this function call. This function will re-enable interrupts.
+    /// duration of this function call.
+    ///
+    /// This function must be called with interrupts disabled. The implementation may re-enable them
+    /// during the function call, but they will be disabled again before returning.
+    ///
+    /// The callee must always resume the system scheduler after calling this function.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
     #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) {
         unsafe {
             DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx);
-
-            System::enable_preemption();
         }
     }
 

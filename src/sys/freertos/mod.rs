@@ -26,11 +26,6 @@ impl DebuggerSystem for FreeRtosSystem {
     fn suspend_preemption() {
         api::vTaskSuspendAll();
     }
-    unsafe fn enable_preemption() {
-        unsafe {
-            api::xTaskResumeAll();
-        }
-    }
 
     fn all_threads(handler: &mut dyn FnMut(Tid)) {
         for task in scan_tasks() {

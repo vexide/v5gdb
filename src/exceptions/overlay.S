@@ -10,7 +10,7 @@ v5gdb_debugger_vector_table:
     @ original_vector_addresses array which stores the address of the entry we need.
     ldr pc, original_reset_addr @ Reset
     ldr pc, original_udf_addr   @ Undefined instruction
-    ldr pc, original_svc_addr       @ Supervisor Call
+    ldr pc, original_svc_addr   @ Supervisor Call
     b prefetch_abort_handler    @ Prefetch abort
     b data_abort_handler        @ Data abort
     nop                         @ Not used
@@ -112,6 +112,38 @@ catch_debug_event:
     ldm sp, {sp,lr}^
     add sp, sp, #8
 
+    @ Re-enable the scheduler if necessary. When configured for FreeRTOS, the debug monitor disables
+    @ the task scheduler to prevent other tasks from running while the debugger is editing their
+    @ state.
+    @ Note that this happens before we restore the general purpose registers, so we can clobber them
+    @ as desired.
+.ifdef FREERTOS
+    .ifdef PROS
+        .set xTaskResumeAll, rtos_resume_all
+    .endif
+
+    @ Switch to system mode -- resuming the scheduler can yield, which expects System mode.
+    @ NB. This will set the current stack to the system mode stack, which has already been updated
+    @ (above) to its new location. LR and SPSR are also banked.
+    cps #0b11111
+
+    @ Save old stack ptr, then align it to 8 bytes for the AAPCS call
+    mov r0, sp
+    bic sp, sp, #0b111
+
+    @ Resume tasks - this might yield.
+    push {r0,lr}
+    blx xTaskResumeAll @ fn() -> u32
+    pop {r0,lr}
+
+    @ Restore stack pointer to previous value
+    mov sp, r0
+
+    @ Switch back to abort mode so that we restore the rest of the saved registers from the task.
+    @ This is also necessary so that the current SPSR is the one we popped into (SPSR_abt).
+    cps #0b10111
+.endif
+
     @ Floating-point/simd registers
     pop {r0}
     vmsr fpscr, r0
@@ -122,60 +154,3 @@ catch_debug_event:
     @ Note that we've already offset LR as required to point to the correct exception return
     @ address.
     ldm sp!, {r0-r12, pc}^
-
-@ RTOS yield syscall handler
-overlay_svc_handler:
-    push {r0} @ Avoid overwriting registers from user code
-
-    @ Are yields enabled?
-    ldr r0, =v5gdb_prevent_yields
-    ldrb r0, [r0]
-    cmp r0, #0
-
-    pop {r0}
-
-    @ Enabled -- continue as normal
-    ldreq pc, original_svc_addr
-
-    @ Disabled -- ignore the yield attempt & return
-    movs pc, lr
-
-@ overlay_irq_handler:
-@     @ We want to call the original IRQ handler, but then return *here* instead of to user code so
-@     @ that we can run our callback function.
-
-@     @ Save original return location & processor state (stack remains aligned to 8)
-@     push {lr}
-@     mrs lr, spsr
-@     push {lr}
-@     @ Original IRQ handler should remain in the same state until we're ready to switch back.
-@     mov spsr, cpsr
-
-@     @ Call the original IRQ handler.
-@     @ IRQ handlers are expected to return to LR - 4, so include an offset.
-@     mov lr, .Lafter_original_irq+4
-@     ldr pc, original_irq_addr
-
-@ .Lafter_original_irq:
-@     @ Now save state, run callbacks. The original IRQ handler probably did something similar, but
-@     @ already popped all its saved registers from the stack. Note that the stack stays aligned.
-@     push {r0-r3,r12}
-@     vpush {d16-d31}
-@     vpush {d0-d15}
-@     vmrs r0, fpscr
-@     push {r0}
-
-@     blx v5gdb_irq_callback
-
-@     @ And... back to user code. Pop everything from the stack and return.
-@     pop {r0}
-@     vmsr fpscr, r0
-@     vpop {d0-d15}
-@     vpop {d16-d31}
-@     pop {r0-r3,r12}
-
-@     pop {lr}
-@     msr spsr, lr
-@     pop {lr}
-@     @ IRQs must return to LR - 4.
-@     subs pc, lr, #4
