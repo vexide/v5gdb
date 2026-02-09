@@ -4,8 +4,7 @@ use core::convert::Infallible;
 
 use gdbstub::{
     arch::Arch,
-    common::Signal,
-    stub::{MultiThreadStopReason, SingleThreadStopReason},
+    stub::MultiThreadStopReason,
     target::{
         Target, TargetError, TargetResult,
         ext::{
@@ -113,8 +112,13 @@ impl V5Target {
         self.exiting = true;
     }
 
-    /// Prepare the debugger to resume, step one instruction, then stop again.
+    /// Create a breakpoint that will stop the debugger after a single instruction has been
+    /// executed.
     pub fn setup_step(&mut self) -> Result<(), BreakpointError> {
+        if self.single_step_request.is_some() {
+            return Ok(());
+        }
+
         let kind = if self.exception_ctx.spsr.thumb() {
             ArmBreakpointKind::Thumb16
         } else {
@@ -127,7 +131,6 @@ impl V5Target {
             kind,
         )?;
 
-        self.resume = true;
         self.single_step_request = Some(SingleStepRequest {
             target_addr: self.exception_ctx.program_counter,
             kind,

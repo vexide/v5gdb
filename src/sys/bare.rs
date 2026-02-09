@@ -40,7 +40,7 @@ impl DebuggerSystem for BareSystem {
     }
 
     #[inline(always)]
-    fn write_registers(_registers: &ArmRegisters, _tid: Tid) -> Result<(), SystemError> {
+    unsafe fn write_registers(_tid: Tid, _registers: &ArmRegisters) -> Result<(), SystemError> {
         Err(SystemError::NoSuchTid)
     }
 
@@ -50,7 +50,7 @@ impl DebuggerSystem for BareSystem {
     }
 
     #[inline(always)]
-    fn write_single_register(
+    unsafe fn write_single_register(
         _tid: Tid,
         _id: ArmRegisterID,
         _value: SavedRegister,

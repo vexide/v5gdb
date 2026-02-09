@@ -12,13 +12,6 @@ unsafe extern "C" {
 
     #[cfg_attr(feature = "pros", link_name = "rtos_suspend_all")]
     pub safe fn vTaskSuspendAll();
-    #[cfg_attr(feature = "pros", link_name = "rtos_resume_all")]
-    pub unsafe fn xTaskResumeAll() -> BaseType_t;
-
-    #[cfg_attr(feature = "pros", link_name = "task_get_current")]
-    pub safe fn xTaskGetCurrentTaskHandle() -> TaskHandle_t;
-    #[cfg_attr(feature = "pros", link_name = "task_get_state")]
-    pub unsafe fn eTaskGetState(xTask: TaskHandle_t) -> eTaskState;
 
     pub unsafe fn uxTaskGetSystemState(
         pxTaskStatusArray: *mut TaskStatus_t,
@@ -80,11 +73,11 @@ impl TaskStatus_t {
 
     /// Sets this task's saved stack pointer.
     ///
+    /// Changing the stack pointer will also change the address of [`Self::saved_context`].
+    ///
     /// # Safety
     ///
     /// The stack pointer must be valid.
-    ///
-    /// After changing the stack pointer,
     pub unsafe fn set_sp(&self, sp: u32) {
         let saved_sp = self.tcb_ptr();
         unsafe {

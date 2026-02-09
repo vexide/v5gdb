@@ -21,6 +21,7 @@ impl SingleThreadResume for V5Target {
 impl SingleThreadSingleStep for V5Target {
     fn step(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
         self.setup_step().expect("Couldn't set up single step");
+        self.resume();
         Ok(())
     }
 }

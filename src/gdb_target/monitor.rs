@@ -132,11 +132,12 @@ impl MonitorCmd for V5Target {
             }
             "log" => {
                 if let Some(level) = args.next()
-                 && let Ok(level) = LevelFilter::from_str(level) {
-                     log::set_max_level(level);
-                 } else {
+                    && let Ok(level) = LevelFilter::from_str(level)
+                {
+                    log::set_max_level(level);
+                } else {
                     gdbstub::outputln!(out, "Expected off/trace/debug/info/warn/error.")
-                 }
+                }
             }
             "sys" => {
                 System::handle_monitor_cmd(args, &mut out);

@@ -37,6 +37,7 @@ impl DebuggerSystem for FreeRtosSystem {
 
     fn current_thread() -> Tid {
         let mut status = MaybeUninit::uninit();
+        // SAFETY: `status` is a pointer to a variable that's valid for writes.
         unsafe {
             api::vTaskGetInfo(
                 TaskHandle_t::CURRENT,
@@ -45,12 +46,17 @@ impl DebuggerSystem for FreeRtosSystem {
                 eTaskState::RUNNING,
             );
         }
+        // SAFETY: We've initialized the status.
         let status = unsafe { status.assume_init() };
-        Tid::new(status.xTaskNumber as usize).expect("Thread IDs should be nonzero")
+
+        // FreeRTOS task IDs start at 1 and increase each time a task is spawned.
+        Tid::new(status.xTaskNumber as usize).expect("Task IDs should be nonzero")
     }
 
     fn thread_exists(tid: Tid) -> bool {
-        scan_tasks().any(|task| task.xTaskNumber as usize == tid.get())
+        scan_tasks()
+            .find(|task| task.xTaskNumber as usize == tid.get())
+            .is_some_and(|task| task.eCurrentState != eTaskState::DELETED)
     }
 
     fn read_registers(tid: Tid) -> Result<ArmRegisters, SystemError> {
@@ -60,7 +66,7 @@ impl DebuggerSystem for FreeRtosSystem {
         let ctx = unsafe {
             let ptr = task.saved_context();
             assert!(
-                unsafe { (*ptr).ulPortTaskHasFPUContext != 0 },
+                (*ptr).ulPortTaskHasFPUContext != 0,
                 "Only tasks with FP contexts are supported"
             );
             ptr.read()
@@ -72,30 +78,38 @@ impl DebuggerSystem for FreeRtosSystem {
             lr: ctx.lr,
             pc: ctx.pc,
             cpsr: ctx.spsr,
+            // These unwraps will not panic because the two sub-arrays add together
+            // to the correct total length.
             d: [ctx.d0_d15, ctx.d16_d31].as_flattened().try_into().unwrap(),
             fpscr: ctx.fpscr,
         })
     }
 
-    fn write_registers(registers: &ArmRegisters, tid: Tid) -> Result<(), SystemError> {
+    unsafe fn write_registers(tid: Tid, registers: &ArmRegisters) -> Result<(), SystemError> {
         let task = lookup_saved_task(tid)?;
 
         unsafe {
-            task.set_sp(registers.sp);
-
             // SAFETY: The task is valid and not running.
-            let ctx = task.saved_context();
+            let old_ctx = task.saved_context().read();
             assert!(
-                unsafe { (*ctx).ulPortTaskHasFPUContext != 0 },
+                old_ctx.ulPortTaskHasFPUContext != 0,
                 "Only tasks with FP contexts are supported"
             );
 
+            // This will change the location of where the saved task context should be, so we have
+            // to re-call `saved_context` to get the new location and write to it.
+            task.set_sp(registers.sp);
+
+            // SAFETY: Caller guarantees this is valid state for the task.
+            let ctx = task.saved_context();
             ctx.write(SavedTaskContext {
                 ulPortTaskHasFPUContext: 1,
                 fpscr: registers.fpscr,
+                // These unwraps will not panic because the range indexing returns
+                // the correct size of array.
                 d16_d31: *registers.d[16..=31].as_array().unwrap(),
                 d0_d15: *registers.d[0..=15].as_array().unwrap(),
-                ulCriticalNesting: (*ctx).ulCriticalNesting,
+                ulCriticalNesting: old_ctx.ulCriticalNesting,
                 gp_registers: registers.r,
                 lr: registers.lr,
                 pc: registers.pc,
@@ -138,7 +152,7 @@ impl DebuggerSystem for FreeRtosSystem {
         }
     }
 
-    fn write_single_register(
+    unsafe fn write_single_register(
         tid: Tid,
         id: ArmRegisterID,
         value: SavedRegister,
@@ -151,7 +165,7 @@ impl DebuggerSystem for FreeRtosSystem {
                 // work, they have to remain in this predictable spot next to the new stack.
                 let ptr = task.saved_context();
                 assert!(
-                    unsafe { (*ptr).ulPortTaskHasFPUContext != 0 },
+                    (*ptr).ulPortTaskHasFPUContext != 0,
                     "Only tasks with FP contexts are supported"
                 );
                 let old_ctx = ptr.read();
@@ -213,11 +227,14 @@ impl DebuggerSystem for FreeRtosSystem {
                     "Stack Remaining"
                 );
 
+                // SAFETY: The scheduler is disabled during the debugger business logic, so there is
+                // no code that could be swapping the current TCB.
                 let current = unsafe { api::pxCurrentTCB };
 
                 for task in scan_tasks() {
                     let marker = if task.xHandle == current { "*" } else { " " };
                     let id = task.xTaskNumber;
+                    // SAFETY: FreeRTOS guarantees this string is valid.
                     let name = unsafe { CStr::from_ptr(task.pcTaskName) };
 
                     let state = match task.eCurrentState {
@@ -274,6 +291,9 @@ fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
         Mutex::new([MaybeUninit::uninit(); _]);
 
     let mut task_array = TASK_ARRAY.lock();
+
+    // SAFETY: The task_array pointer is valid and we pass in the correct length for
+    // bounds checking.
     let num_tasks = unsafe {
         api::uxTaskGetSystemState(
             task_array.as_mut_ptr().cast(),
@@ -285,9 +305,20 @@ fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
     (0..num_tasks).map(move |idx| unsafe { task_array.get_unchecked(idx).assume_init() })
 }
 
+/// Returns the status of the switched-out task with the given ID.
+///
+/// # Errors
+///
+/// Returns an error if the task doesn't exist or is deleted.
+///
+/// # Panics
+///
+/// Panics if the given thread ID refers to the current task.
 fn lookup_saved_task(tid: Tid) -> Result<TaskStatus_t, SystemError> {
     let task = scan_tasks()
-        .find(|task| task.xTaskNumber as usize == tid.get())
+        .find(|task| {
+            task.xTaskNumber as usize == tid.get() && task.eCurrentState != eTaskState::DELETED
+        })
         .ok_or(SystemError::NoSuchTid)?;
 
     assert!(task.eCurrentState != eTaskState::RUNNING);

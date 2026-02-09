@@ -56,7 +56,10 @@ impl MultiThreadBase for V5Target {
         if tid == System::current_thread() {
             <Self as SingleThreadBase>::write_registers(self, regs)
         } else {
-            System::write_registers(regs, tid)?;
+            // SAFETY: We trust that GDB will not corrupt system state.
+            unsafe {
+                System::write_registers(tid, regs)?;
+            }
             Ok(())
         }
     }
@@ -117,14 +120,16 @@ impl MultiThreadSingleStep for V5Target {
         tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
-        log::warn!("Resume action for {tid:?} - current = {}", System::current_thread());
+        log::warn!(
+            "Resume action for {tid:?} - current = {}",
+            System::current_thread()
+        );
         if tid == System::current_thread() {
             log::debug!("Resume action - step");
             self.setup_step().expect("Couldn't set up single step");
             Ok(())
         } else {
-            Ok(())
-            // unimplemented!("Can't single step a different task");
+            unimplemented!("Can't single step a different thread");
         }
     }
 }
@@ -155,7 +160,10 @@ impl SingleRegisterAccess<Tid> for V5Target {
             <Self as SingleRegisterAccess<()>>::write_register(self, (), reg_id, val)
         } else {
             let reg = SavedRegister::from_le_bytes(val).ok_or(TargetError::NonFatal)?;
-            System::write_single_register(tid, reg_id, reg)?;
+            // SAFETY: We trust that GDB will not corrupt system state.
+            unsafe {
+                System::write_single_register(tid, reg_id, reg)?;
+            }
             Ok(())
         }
     }

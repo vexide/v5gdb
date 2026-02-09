@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use v5gdb::{DEBUGGER, debugger::V5Debugger, transport::StdioTransport};
+use v5gdb::{debugger::V5Debugger, transport::StdioTransport};
 use vexide::prelude::*;
 
 #[inline(never)]

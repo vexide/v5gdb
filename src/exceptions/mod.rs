@@ -45,7 +45,6 @@ pub(crate) mod arm {
         DEBUGGER,
         cpu::{exception::VectorBaseAddressRegister, instruction::Instruction},
         exceptions::DebugEventContext,
-        sys::{DebuggerSystem, System},
     };
 
     core::arch::global_asm!(
