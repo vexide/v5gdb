@@ -104,7 +104,7 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                                     // If we receive an invalid packet, fall back to assuming it's
                                     // just raw data and print it out.
                                     let body = &incoming_bytes[..report.parsed_size()];
-                                    println!("unknown packet: {:?}", String::from_utf8_lossy(body));
+                                    println!("unknown: {:?}", String::from_utf8_lossy(body));
                                     stderr.write_all(body).await?;
                                 }
 
@@ -130,6 +130,7 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                 match read {
                     Ok(0) => break,
                     Ok(size) => {
+                        println!("< {}", String::from_utf8_lossy(&program_input[..size]));
                         connection.write_user(&program_input[..size]).await.unwrap();
                     }
                     _ => {}
@@ -158,10 +159,11 @@ async fn handle_packet(
 
     match channel_byte {
         b'u' => {
-            println!("user packet: {:?}", String::from_utf8_lossy(body));
+            print!("{}", String::from_utf8_lossy(body));
             _ = user_out.write_all(body).await;
         }
         b'd' => {
+            println!("> {}", String::from_utf8_lossy(body));
             _ = debug_out.write_all(body).await;
         }
         // Unknown channel

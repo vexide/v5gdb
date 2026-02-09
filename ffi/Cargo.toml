@@ -13,4 +13,4 @@ gdbstub.workspace = true
 spin.workspace = true
 vex-sdk.workspace = true
 log = "0.4.29"
-owo-colors = "4.2.3"
+owo-colors.workspace = true

@@ -119,6 +119,8 @@ impl V5Target {
             return Ok(());
         }
 
+        log::debug!("Preparing single step operation");
+
         let kind = if self.exception_ctx.spsr.thumb() {
             ArmBreakpointKind::Thumb16
         } else {
@@ -153,7 +155,7 @@ impl V5Target {
             }
             // GDB allows software breaks to be hardcoded `bkpt` instructions in the program, so
             // there's no need for special handling there.
-            _ => MultiThreadStopReason::SwBreak(System::current_thread())
+            _ => MultiThreadStopReason::SwBreak(System::current_thread()),
         }
     }
 }
@@ -185,6 +187,8 @@ impl Target for V5Target {
 
 impl SingleThreadBase for V5Target {
     fn read_registers(&mut self, regs: &mut ArmRegisters) -> TargetResult<(), Self> {
+        log::info!("Reading all registers");
+
         let ctx = &self.exception_ctx;
         *regs = ArmRegisters {
             r: ctx.registers,
@@ -200,6 +204,8 @@ impl SingleThreadBase for V5Target {
     }
 
     fn write_registers(&mut self, regs: &<ArmV7 as Arch>::Registers) -> TargetResult<(), Self> {
+        log::info!("Writing all registers");
+
         let ctx = &mut self.exception_ctx;
         *ctx = DebugEventContext {
             registers: regs.r,
@@ -215,6 +221,8 @@ impl SingleThreadBase for V5Target {
     }
 
     fn read_addrs(&mut self, start_addr: u32, data: &mut [u8]) -> TargetResult<usize, Self> {
+        log::info!("Read addr {start_addr} for {} bytes", data.len(),);
+
         let bytes_read = memory::read_memory(start_addr, data);
         if bytes_read == 0 {
             return Err(TargetError::Errno(HostIoErrno::EFAULT as u8));
@@ -224,6 +232,8 @@ impl SingleThreadBase for V5Target {
     }
 
     fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
+        log::info!("Write addr {start_addr} for {} bytes", data.len(),);
+
         if memory::write_memory(start_addr, data) {
             Ok(())
         } else {

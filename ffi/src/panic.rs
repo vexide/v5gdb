@@ -2,6 +2,7 @@ use core::{fmt::Write, panic::PanicInfo};
 
 #[panic_handler]
 fn panic_handler(panic: &PanicInfo) -> ! {
+    log::error!("v5gdb {panic}");
     let mut report = ErrorReport::begin();
     _ = writeln!(report, "v5gdb {panic}");
 
@@ -111,10 +112,6 @@ impl Write for ErrorReport {
             }
 
             self.pos += 1;
-        }
-
-        unsafe {
-            vex_sdk::vexSerialWriteBuffer(1, s.as_ptr(), s.len() as u32);
         }
 
         Ok(())
