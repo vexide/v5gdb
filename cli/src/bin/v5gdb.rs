@@ -3,8 +3,8 @@ use std::{process::exit, time::Duration};
 use clap::Parser;
 use cobs::CobsDecoderOwned;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, stderr},
-    net::{TcpListener, TcpStream},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, stderr},
+    net::TcpListener,
     process::Command,
     time::sleep,
 };
@@ -81,6 +81,7 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
     let mut program_input = [0; 4096];
 
     let mut decoder = CobsDecoderOwned::new(2048);
+    let mut stderr = stderr();
 
     let (mut conn, _addr) = server.accept().await?;
 
@@ -97,12 +98,14 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                         match decoder.push(incoming_bytes) {
                             Ok(Some(report)) => {
                                 let packet = &decoder.dest()[..report.frame_size()];
-                                let was_valid = handle_packet(&mut conn, packet).await;
+                                let was_valid = handle_packet(&mut conn, &mut stderr, packet).await;
 
                                 if !was_valid {
                                     // If we receive an invalid packet, fall back to assuming it's
                                     // just raw data and print it out.
-                                    stderr().write_all(&incoming_bytes[..report.parsed_size()]).await?;
+                                    let body = &incoming_bytes[..report.parsed_size()];
+                                    println!("unknown packet: {:?}", String::from_utf8_lossy(body));
+                                    stderr.write_all(body).await?;
                                 }
 
                                 decoder.reset();
@@ -111,7 +114,8 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                             Err(_) => {
                                 // We are only discarding one byte, so print that one.
                                 let invalid_byte = incoming_bytes[0];
-                                stderr().write_all(&[invalid_byte]).await?;
+                                stderr.write_all(&[invalid_byte]).await?;
+                                println!("invalid: {:?}", String::from_utf8_lossy(&[invalid_byte]));
 
                                 // Skip one byte and try to resynchronize
                                 incoming_bytes = &incoming_bytes[1..];
@@ -140,7 +144,11 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
 }
 
 /// Handles a packet from the V5 device and returns whether it was valid.
-async fn handle_packet(writer: &mut TcpStream, packet: &[u8]) -> bool {
+async fn handle_packet(
+    debug_out: &mut (impl AsyncWrite + Unpin),
+    user_out: &mut (impl AsyncWrite + Unpin),
+    packet: &[u8],
+) -> bool {
     let Some(channel_byte) = packet.first() else {
         // Missing channel
         return false;
@@ -150,10 +158,11 @@ async fn handle_packet(writer: &mut TcpStream, packet: &[u8]) -> bool {
 
     match channel_byte {
         b'u' => {
-            _ = stderr().write_all(body).await;
+            println!("user packet: {:?}", String::from_utf8_lossy(body));
+            _ = user_out.write_all(body).await;
         }
         b'd' => {
-            _ = writer.write_all(body).await;
+            _ = debug_out.write_all(body).await;
         }
         // Unknown channel
         _ => return false,

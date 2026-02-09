@@ -261,8 +261,6 @@ where
             }
             GdbStubStateMachine::Running(gdb) => {
                 let reported_reason = target.get_stop_reason();
-                target.single_step_request = None;
-
                 log::warn!("Debugger Stop reason: {reported_reason:?}");
 
                 // Once we tell GDB we've exited we should exit the monitor because the session will

@@ -144,23 +144,16 @@ impl V5Target {
             return MultiThreadStopReason::Exited(0);
         }
 
-        let reason = self.hw_manager.last_break_reason();
-
-        if reason == Some(DebugEventReason::Breakpoint) {
-            // Hardware breakpoints are also used for single stepping, and we should report
-            // that differently.
-            // TODO: If both a single step and a hardware breakpoint are triggered, how
-            // should be handle both? Right now, this logic will prioritize the single step,
-            // but we might want it to be the other way around.
-            if self.single_step_request.is_some() {
-                MultiThreadStopReason::DoneStep
-            } else {
+        match self.hw_manager.last_break_reason() {
+            Some(DebugEventReason::Breakpoint) => {
+                // We don't use MultiThreadStopReason::DoneStep because it doesn't send thread info
+                // to GDB (DoneStep is just an alias for SIGTRAP without thread info). HwBreak is
+                // essentially the same message but with thread info set.
                 MultiThreadStopReason::HwBreak(System::current_thread())
             }
-        } else {
-            // GDB interprets this as a software breakpoint if there is one, but will halt
-            // even if the user didn't explicitly set one.
-            MultiThreadStopReason::SwBreak(System::current_thread())
+            // GDB allows software breaks to be hardcoded `bkpt` instructions in the program, so
+            // there's no need for special handling there.
+            _ => MultiThreadStopReason::SwBreak(System::current_thread())
         }
     }
 }
