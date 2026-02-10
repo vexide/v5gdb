@@ -19,6 +19,8 @@ struct Args {
     #[clap(long)]
     tcp: Option<String>,
     elf_files_to_debug: Vec<String>,
+    #[clap(long)]
+    debug_io: bool,
 }
 
 #[tokio::main]
@@ -34,8 +36,11 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
     let server = TcpListener::bind(addr).await?;
-    let server_task =
-        tokio::spawn(async move { serve_device_serial(device, server).await.unwrap() });
+    let server_task = tokio::spawn(async move {
+        serve_device_serial(device, server, args.debug_io)
+            .await
+            .unwrap()
+    });
 
     if args.tcp.is_some() {
         server_task.await?;
@@ -74,7 +79,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyhow::Result<()> {
+async fn serve_device_serial(
+    device: SerialDevice,
+    server: TcpListener,
+    debug_io: bool,
+) -> anyhow::Result<()> {
     let mut connection = device.connect(Duration::from_secs(5))?;
 
     let mut program_output = [0; 2048];
@@ -98,13 +107,22 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                         match decoder.push(incoming_bytes) {
                             Ok(Some(report)) => {
                                 let packet = &decoder.dest()[..report.frame_size()];
-                                let was_valid = handle_packet(&mut conn, &mut stderr, packet).await;
+                                let was_valid = handle_packet(
+                                    &mut conn,
+                                    &mut stderr,
+                                    packet,
+                                    debug_io,
+                                ).await;
 
                                 if !was_valid {
                                     // If we receive an invalid packet, fall back to assuming it's
                                     // just raw data and print it out.
                                     let body = &incoming_bytes[..report.parsed_size()];
-                                    println!("unknown: {:?}", String::from_utf8_lossy(body));
+
+                                    if debug_io {
+                                        println!("unknown: {:?}", String::from_utf8_lossy(body));
+                                    }
+
                                     stderr.write_all(body).await?;
                                 }
 
@@ -115,7 +133,10 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                                 // We are only discarding one byte, so print that one.
                                 let invalid_byte = incoming_bytes[0];
                                 stderr.write_all(&[invalid_byte]).await?;
-                                println!("invalid: {:?}", String::from_utf8_lossy(&[invalid_byte]));
+
+                                if debug_io {
+                                    println!("invalid: {:?}", String::from_utf8_lossy(&[invalid_byte]));
+                                }
 
                                 // Skip one byte and try to resynchronize
                                 incoming_bytes = &incoming_bytes[1..];
@@ -130,7 +151,10 @@ async fn serve_device_serial(device: SerialDevice, server: TcpListener) -> anyho
                 match read {
                     Ok(0) => break,
                     Ok(size) => {
-                        println!("< {}", String::from_utf8_lossy(&program_input[..size]));
+                        if debug_io {
+                            println!("< {}", String::from_utf8_lossy(&program_input[..size]));
+                        }
+
                         connection.write_user(&program_input[..size]).await.unwrap();
                     }
                     _ => {}
@@ -149,6 +173,7 @@ async fn handle_packet(
     debug_out: &mut (impl AsyncWrite + Unpin),
     user_out: &mut (impl AsyncWrite + Unpin),
     packet: &[u8],
+    debug_io: bool,
 ) -> bool {
     let Some(channel_byte) = packet.first() else {
         // Missing channel
@@ -159,11 +184,15 @@ async fn handle_packet(
 
     match channel_byte {
         b'u' => {
-            print!("{}", String::from_utf8_lossy(body));
+            if debug_io {
+                print!("{}", String::from_utf8_lossy(body));
+            }
             _ = user_out.write_all(body).await;
         }
         b'd' => {
-            println!("> {}", String::from_utf8_lossy(body));
+            if debug_io {
+                println!("> {}", String::from_utf8_lossy(body));
+            }
             _ = debug_out.write_all(body).await;
         }
         // Unknown channel
