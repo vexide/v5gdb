@@ -109,14 +109,19 @@ where
         log::debug!("Debugger initialized");
     }
 
-    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) {
+    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool {
         let mut state = self.state();
         // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
         state.target.set_breakpoints_ignored(true);
 
         // We re-enable interrupts after the abort (so that UART works) but prevent the RTOS from
         // preempting us. When the debugger is active, the system should appear paused.
-        System::suspend_preemption();
+
+        // If we're handling a single-step completion, the scheduler is already disabled from when
+        // the step was initiated (previous debug session), so there's no need to do that again.
+        if state.target.single_step_request.is_none() {
+            System::suspend_preemption();
+        }
         unsafe {
             aarch32_cpu::interrupt::enable();
         }
@@ -191,12 +196,16 @@ where
 
         log::debug!("Exiting debug event handler");
 
+        // Single steps run with the scheduler off so that we are guaranteed to step the current
+        // task, not a different one. - Side note: If PROS implemented ARM's context id register, we
+        // could just filter the single step breakpoint by task id and there would be no need for
+        // this.
+        let should_unpause_scheduler = state.target.single_step_request.is_none();
+
         state.target.hw_manager.set_locked(was_locked);
         state.target.set_breakpoints_ignored(false);
 
-        // Disable interrupts again so that the restore code doesn't get accidentally preempted.
-        // Resuming the system scheduler is handled by the callee, so we can skip doing that.
-        aarch32_cpu::interrupt::disable();
+        should_unpause_scheduler
     }
 }
 

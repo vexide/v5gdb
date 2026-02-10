@@ -73,10 +73,12 @@ pub unsafe trait Debugger: Send + Sync + Any {
     /// The function is given access to the pre-breakpoint CPU state and can view/modify it as
     /// needed.
     ///
+    /// Returns whether the system scheduler should be unpaused when returning to user code.
+    ///
     /// # Safety
     ///
     /// The given fault must represent valid, saved CPU state.
-    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext);
+    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool;
 }
 
 /// Set the current debugger.

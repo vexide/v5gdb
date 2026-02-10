@@ -98,15 +98,19 @@ catch_debug_event:
 
     @ -- Handle exception --
 
-    @ Pass it to our handler using the C ABI, fn(*mut DebugEventContext) -> ():
+    @ Pass it to our handler using the C ABI, fn(*mut DebugEventContext) -> bool:
     mov r0, sp              @ Set param 0
     blx v5gdb_handle_debug_event  @ Actually call the function now (stack is already aligned correctly)
 
     @ -- Restore --
 
+    @ Prevent ourselves from getting preempted while messing with task state - this is especially
+    @ important on systems with a preemptive scheduler (i.e. FreeRTOS).
+    cpsid i
+
     @ Saved program status
-    pop {r0}
-    msr spsr, r0
+    pop {r1}
+    msr spsr, r1
 
     @ Pop user/system mode banked registers back - SP, LR
     ldm sp, {sp,lr}^
@@ -122,12 +126,22 @@ catch_debug_event:
         .set xTaskResumeAll, rtos_resume_all
     .endif
 
-    @ Switch to system mode -- resuming the scheduler can yield, which expects System mode.
+    @ Check the return value from `v5gdb_handle_debug_event`, which indicates whether to resume the
+    @ scheduler.
+    @ Motivation: This will be false in the case of a single step, since the debugger's immunity
+    @ from hardware breakpoints is only because it runs in Abort Mode. Resuming the scheduler
+    @ involves switching to System Mode, which forfeits that power, firing the single step inside of
+    @ the abort handler itself. Obviously, single steps are supposed to step *user* code, so this
+    @ would be suboptimal.
+    cbz r0, .Lafter_freertos_scheduler_unpause
+
+    @ Switch to System Mode -- resuming the scheduler can yield, which is only sound if the CPU is
+    @ in System Mode.
     @ NB. This will set the current stack to the system mode stack, which has already been updated
     @ (above) to its new location. LR and SPSR are also banked.
     cps #0b11111
 
-    @ Save old stack ptr, then align it to 8 bytes for the AAPCS call
+    @ (Save old stack ptr, then...) Align stack to 8 bytes for the AAPCS call
     mov r0, sp
     bic sp, sp, #0b111
 
@@ -142,6 +156,7 @@ catch_debug_event:
     @ Switch back to abort mode so that we restore the rest of the saved registers from the task.
     @ This is also necessary so that the current SPSR is the one we popped into (SPSR_abt).
     cps #0b10111
+.Lafter_freertos_scheduler_unpause:
 .endif
 
     @ Floating-point/simd registers

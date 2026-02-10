@@ -78,10 +78,8 @@ pub(crate) mod arm {
     /// The callee must always resume the system scheduler after calling this function.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
     #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
-    pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) {
-        unsafe {
-            DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx);
-        }
+    pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) -> bool {
+        unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) }
     }
 
     static ORIGINAL_VECTOR_ADDRESSES_SET: AtomicBool = AtomicBool::new(false);
