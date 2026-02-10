@@ -133,7 +133,8 @@ catch_debug_event:
     @ involves switching to System Mode, which forfeits that power, firing the single step inside of
     @ the abort handler itself. Obviously, single steps are supposed to step *user* code, so this
     @ would be suboptimal.
-    cbz r0, .Lafter_freertos_scheduler_unpause
+    cmp r0, #0
+    beq .Lafter_freertos_scheduler_unpause
 
     @ Switch to System Mode -- resuming the scheduler can yield, which is only sound if the CPU is
     @ in System Mode.
