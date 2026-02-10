@@ -142,7 +142,7 @@ where
         let bkpt_address = state.target.exception_ctx.program_counter;
         let tracked_bkpt_id = state.target.query_sw_breakpoint(bkpt_address);
 
-        let is_manual_bkpt =
+        state.target.last_stop_was_hardcoded =
             tracked_bkpt_id.is_none() && reason == Some(DebugEventReason::BkptInstr);
 
         // If we previously wanted to single step, we can permanently remove the breakpoint that
@@ -156,7 +156,7 @@ where
             );
         }
 
-        if is_manual_bkpt {
+        if state.target.last_stop_was_hardcoded {
             // Normally we try to avoid an infinite loop of breakpoints by replacing tracked
             // software breakpoints with their real instructions and re-running them. But if the
             // `bkpt` *is* the real instruction then we don't need to do the normal

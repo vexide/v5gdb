@@ -4,6 +4,7 @@ use core::convert::Infallible;
 
 use gdbstub::{
     arch::Arch,
+    common::Signal,
     stub::MultiThreadStopReason,
     target::{
         Target, TargetError, TargetResult,
@@ -55,6 +56,10 @@ pub struct V5Target {
     /// If this goes back to `false`, an exit has been acknowledged by GDB.
     pub exiting: bool,
 
+    /// Indicates whether the most recent program stop occurred due to a hardcoded breakpoint
+    /// (`bkpt` instruction).
+    pub last_stop_was_hardcoded: bool,
+
     /// Indicates whether new software breakpoints should be enabled.
     pub breaks_paused: bool,
     /// The list of breakpoints.
@@ -86,6 +91,7 @@ impl V5Target {
             exception_ctx: DebugEventContext::default(),
             resume: false,
             exiting: false,
+            last_stop_was_hardcoded: false,
             breaks_paused: false,
             breaks: [None; _],
             single_step_request: None,
@@ -153,9 +159,15 @@ impl V5Target {
                 // essentially the same message but with thread info set.
                 MultiThreadStopReason::HwBreak(System::current_thread())
             }
-            // GDB allows software breaks to be hardcoded `bkpt` instructions in the program, so
-            // there's no need for special handling there.
-            _ => MultiThreadStopReason::SwBreak(System::current_thread()),
+            // Sometimes GDB will try to skip hardcoded breakpoints it's already seen
+            // recently, so we report those as traps instead.
+            Some(DebugEventReason::BkptInstr) if !self.last_stop_was_hardcoded => {
+                MultiThreadStopReason::SwBreak(System::current_thread())
+            }
+            _ => MultiThreadStopReason::SignalWithThread {
+                signal: Signal::SIGTRAP,
+                tid: System::current_thread(),
+            },
         }
     }
 }
