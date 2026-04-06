@@ -1,3 +1,4 @@
 {
-    "rust-analyzer.cargo.target": "armv7a-vex-v5"
+    "rust-analyzer.cargo.target": "armv7a-vex-v5",
+    "rust-analyzer.cargo.features": ["freertos"]
 }

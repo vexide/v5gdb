@@ -315,17 +315,6 @@ impl HwBreakpointManager {
         }
     }
 
-    /// Run a function with the hardware debug system unlocked.
-    ///
-    /// The system's previous lock state will be restored when the function returns.
-    pub fn with_unlocked<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let was_locked = self.locked();
-        self.set_locked(was_locked);
-        let ret = f(self);
-        self.set_locked(true);
-        ret
-    }
-
     pub unsafe fn mmio(&self) -> &MmioDebugLogic<'_> {
         &self.mmio
     }

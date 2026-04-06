@@ -11,7 +11,10 @@ use crate::{
         arch::{ArmRegisterID, ArmRegisters},
         single_register_access::SavedRegister,
     },
-    sys::{DebuggerSystem, SystemError, freertos::api::SavedTaskContext},
+    sys::{
+        DebuggerSystem, SystemError,
+        freertos::api::{BaseContext, FPUContext, SavedTaskContextFPU},
+    },
 };
 
 mod api;
@@ -63,25 +66,21 @@ impl DebuggerSystem for FreeRtosSystem {
         let task = lookup_saved_task(tid)?;
 
         // SAFETY: The task is valid and not running.
-        let ctx = unsafe {
-            let ptr = task.saved_context();
-            assert!(
-                (*ptr).ulPortTaskHasFPUContext != 0,
-                "Only tasks with FP contexts are supported"
-            );
-            ptr.read()
-        };
+        let ctx = unsafe { task.saved_context().read() };
 
         Ok(ArmRegisters {
-            r: ctx.gp_registers,
+            r: ctx.base.gp_registers,
             sp: unsafe { task.sp() },
-            lr: ctx.lr,
-            pc: ctx.pc,
-            cpsr: ctx.spsr,
+            lr: ctx.base.lr,
+            pc: ctx.base.pc,
+            cpsr: ctx.base.spsr,
             // These unwraps will not panic because the two sub-arrays add together
             // to the correct total length.
-            d: [ctx.d0_d15, ctx.d16_d31].as_flattened().try_into().unwrap(),
-            fpscr: ctx.fpscr,
+            d: [ctx.fpu.d0_d15, ctx.fpu.d16_d31]
+                .as_flattened()
+                .try_into()
+                .unwrap(),
+            fpscr: ctx.fpu.fpscr,
         })
     }
 
@@ -90,31 +89,30 @@ impl DebuggerSystem for FreeRtosSystem {
 
         unsafe {
             // SAFETY: The task is valid and not running.
-            let old_ctx = task.saved_context().read();
-            assert!(
-                old_ctx.ulPortTaskHasFPUContext != 0,
-                "Only tasks with FP contexts are supported"
-            );
+            let critical_nesting = (*task.saved_context()).base.ulCriticalNesting;
 
             // This will change the location of where the saved task context should be, so we have
             // to re-call `saved_context` to get the new location and write to it.
-            task.set_sp(registers.sp);
+            task.set_sp(registers.sp, false);
 
             // SAFETY: Caller guarantees this is valid state for the task.
             let ctx = task.saved_context();
-            ctx.write(SavedTaskContext {
-                ulPortTaskHasFPUContext: 1,
-                fpscr: registers.fpscr,
-                // These unwraps will not panic because the range indexing returns
-                // the correct size of array.
-                d16_d31: *registers.d[16..=31].as_array().unwrap(),
-                d0_d15: *registers.d[0..=15].as_array().unwrap(),
-                ulCriticalNesting: old_ctx.ulCriticalNesting,
-                gp_registers: registers.r,
-                lr: registers.lr,
-                pc: registers.pc,
-                spsr: registers.cpsr,
-            })
+            ctx.write(SavedTaskContextFPU::new(
+                FPUContext {
+                    fpscr: registers.fpscr,
+                    // These unwraps will not panic because the range indexing returns
+                    // the correct size of array.
+                    d16_d31: *registers.d[16..=31].as_array().unwrap(),
+                    d0_d15: *registers.d[0..=15].as_array().unwrap(),
+                },
+                BaseContext {
+                    ulCriticalNesting: critical_nesting,
+                    gp_registers: registers.r,
+                    lr: registers.lr,
+                    pc: registers.pc,
+                    spsr: registers.cpsr,
+                },
+            ));
         };
 
         Ok(())
@@ -122,32 +120,23 @@ impl DebuggerSystem for FreeRtosSystem {
 
     fn read_single_register(tid: Tid, id: ArmRegisterID) -> Result<SavedRegister, SystemError> {
         let task = lookup_saved_task(tid)?;
-
-        if id == ArmRegisterID::Sp {
-            return Ok(SavedRegister::U32(unsafe { task.sp() }));
-        }
-
         let ctx = unsafe { task.saved_context() };
-        assert!(
-            unsafe { (*ctx).ulPortTaskHasFPUContext != 0 },
-            "Only tasks with FP contexts are supported"
-        );
 
         unsafe {
             Ok(match id {
-                ArmRegisterID::Gpr(i) => SavedRegister::U32((*ctx).gp_registers[i as usize]),
-                ArmRegisterID::Lr => SavedRegister::U32((*ctx).lr),
-                ArmRegisterID::Pc => SavedRegister::U32((*ctx).pc),
-                ArmRegisterID::Cpsr => SavedRegister::U32((*ctx).spsr),
+                ArmRegisterID::Gpr(i) => SavedRegister::U32((*ctx).base.gp_registers[i as usize]),
+                ArmRegisterID::Lr => SavedRegister::U32((*ctx).base.lr),
+                ArmRegisterID::Pc => SavedRegister::U32((*ctx).base.pc),
+                ArmRegisterID::Cpsr => SavedRegister::U32((*ctx).base.spsr),
                 ArmRegisterID::Fpr(i) => SavedRegister::U64({
                     if let Some(i) = i.checked_sub(16) {
-                        (*ctx).d16_d31[i as usize]
+                        (*ctx).fpu.d16_d31[i as usize]
                     } else {
-                        (*ctx).d0_d15[i as usize]
+                        (*ctx).fpu.d0_d15[i as usize]
                     }
                 }),
-                ArmRegisterID::Fpscr => SavedRegister::U32((*ctx).fpscr),
-                ArmRegisterID::Sp => unreachable!(),
+                ArmRegisterID::Fpscr => SavedRegister::U32((*ctx).fpu.fpscr),
+                ArmRegisterID::Sp => SavedRegister::U32(task.sp()),
             })
         }
     }
@@ -158,40 +147,23 @@ impl DebuggerSystem for FreeRtosSystem {
         value: SavedRegister,
     ) -> Result<(), SystemError> {
         let task = lookup_saved_task(tid)?;
-
-        if id == ArmRegisterID::Sp {
-            unsafe {
-                // The task's registers are saved just below its stack. For state restoration to
-                // work, they have to remain in this predictable spot next to the new stack.
-                let ptr = task.saved_context();
-                assert!(
-                    (*ptr).ulPortTaskHasFPUContext != 0,
-                    "Only tasks with FP contexts are supported"
-                );
-                let old_ctx = ptr.read();
-
-                task.set_sp(value.unwrap_u32());
-                task.saved_context().write(old_ctx);
-            }
-        }
-
         let ctx = unsafe { task.saved_context() };
 
         unsafe {
             match id {
-                ArmRegisterID::Gpr(i) => (*ctx).gp_registers[i as usize] = value.unwrap_u32(),
-                ArmRegisterID::Lr => (*ctx).lr = value.unwrap_u32(),
-                ArmRegisterID::Pc => (*ctx).pc = value.unwrap_u32(),
-                ArmRegisterID::Cpsr => (*ctx).spsr = value.unwrap_u32(),
+                ArmRegisterID::Gpr(i) => (*ctx).base.gp_registers[i as usize] = value.unwrap_u32(),
+                ArmRegisterID::Lr => (*ctx).base.lr = value.unwrap_u32(),
+                ArmRegisterID::Pc => (*ctx).base.pc = value.unwrap_u32(),
+                ArmRegisterID::Cpsr => (*ctx).base.spsr = value.unwrap_u32(),
                 ArmRegisterID::Fpr(i) => {
                     if let Some(i) = i.checked_sub(16) {
-                        (*ctx).d16_d31[i as usize] = value.unwrap_u64();
+                        (*ctx).fpu.d16_d31[i as usize] = value.unwrap_u64();
                     } else {
-                        (*ctx).d0_d15[i as usize] = value.unwrap_u64();
+                        (*ctx).fpu.d0_d15[i as usize] = value.unwrap_u64();
                     }
                 }
-                ArmRegisterID::Fpscr => (*ctx).fpscr = value.unwrap_u32(),
-                ArmRegisterID::Sp => unreachable!(),
+                ArmRegisterID::Fpscr => (*ctx).fpu.fpscr = value.unwrap_u32(),
+                ArmRegisterID::Sp => task.set_sp(value.unwrap_u32(), true),
             }
 
             Ok(())
