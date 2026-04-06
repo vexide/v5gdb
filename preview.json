@@ -1,0 +1,12 @@
+[
+  {
+    "metadata": {
+      "location": "https://github.com/vexide/v5gdb/releases/download/v0.1.0-alpha.1/v5gdb%400.1.0-alpha.1.zip"
+    },
+    "name": "v5gdb",
+    "py/object": "pros.conductor.templates.base_template.BaseTemplate",
+    "supported_kernels": "^4.2.2",
+    "target": "v5",
+    "version": "0.1.0-alpha.1"
+  }
+]
