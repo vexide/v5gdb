@@ -146,9 +146,9 @@ where
             tracked_bkpt_id.is_none() && reason == Some(DebugEventReason::BkptInstr);
 
         // If we previously wanted to single step, we can permanently remove the breakpoint that
-        // supported that now. The saved single step request isn't removed yet so that the stop
-        // reason we report to GDB is correct.
-        if let Some(single_step) = state.target.single_step_request {
+        // supported that now. The single step request is then cleared since we've finished all
+        // required cleanup.
+        if let Some(single_step) = state.target.single_step_request.take() {
             state.target.hw_manager.remove_breakpoint_at(
                 single_step.target_addr,
                 Specificity::Mismatch,

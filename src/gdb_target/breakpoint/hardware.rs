@@ -322,7 +322,9 @@ impl HwBreakpointManager {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Specificity {
+    /// The breakpoint/watchpoint is triggered when the specified addresses are accessed.
     Match,
+    /// The breakpoint/watchpoint is triggered when an address is accessed which is not specified.
     Mismatch,
 }
 
