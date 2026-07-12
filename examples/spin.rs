@@ -14,11 +14,6 @@ use vexide::prelude::*;
 #[inline(never)]
 fn busy_spin() -> ! {
     loop {
-        println!("this loop is doing a lot of nothing!");
-        unsafe {
-            vexTasksRun();
-        }
-
         for _ in 0..50_000_000u32 {
             core::hint::spin_loop();
         }
@@ -36,5 +31,8 @@ async fn main(_peripherals: Peripherals) {
     v5gdb::breakpoint!();
 
     println!("About to start spinning; attach GDB, `continue`, then press Ctrl-C");
+    unsafe {
+        vexTasksRun();
+    }
     busy_spin();
 }
