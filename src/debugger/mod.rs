@@ -1,6 +1,10 @@
 //! Main debugger loop and event handling logic.
 
-use core::{convert::Infallible, mem};
+use core::{
+    convert::Infallible,
+    mem,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use derive_more::From;
 use gdbstub::{
@@ -33,7 +37,6 @@ pub enum DebuggerError {
         source: GdbStubError<Infallible, TransportError>,
     },
 }
-
 
 /// Debugger manager.
 pub struct V5Debugger<S: Transport> {
@@ -101,6 +104,40 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
 
         session.target.leave_breakpoint(ctx)
     }
+
+    fn poll(&self) {
+        // This runs in an interrupt context so it must be non-blocking and must not write to
+        // serial. Serial writes aren't IRQ-safe, and logger tend to write to stdout (serial ch1),
+        // so also avoid logging here.
+
+        // A failed try_lock means the monitor is active (or briefly busy). In that case the serial
+        // stream carries real GDB protocol traffic so we shouldn't touch it.
+        let Some(_session) = self.session.try_lock() else {
+            return;
+        };
+
+        // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
+        const CTRL_C: i32 = 0x03;
+        if unsafe { vex_sdk::vexSerialPeekChar(1) } != CTRL_C {
+            return;
+        }
+
+        // Consume the interrupt byte so it doesn't linger in the FIFO.
+        unsafe {
+            vex_sdk::vexSerialReadChar(1);
+        }
+
+        ASYNC_HALT_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Number of Ctrl-C (`0x03`) async-halt requests observed by [`V5Debugger::poll`].
+static ASYNC_HALT_REQUESTS: AtomicU32 = AtomicU32::new(0);
+
+/// Returns how many async-halt (Ctrl-C) requests the debugger has received.
+#[must_use]
+pub fn async_halt_request_count() -> u32 {
+    ASYNC_HALT_REQUESTS.load(Ordering::Relaxed)
 }
 
 /// What shall be done after a breakpoint has been acknowledged.
@@ -220,10 +257,7 @@ where
         let is_thumb = (exit_func & 1) != 0;
         log::debug!("Register pre-exit handler (thumb={is_thumb})");
 
-        let internal_breaks = [(
-            InternalBreakpoint::SystemExitRequest,
-            exit_func & !1,
-        )];
+        let internal_breaks = [(InternalBreakpoint::SystemExitRequest, exit_func & !1)];
 
         for (_id, addr) in internal_breaks {
             unsafe {
@@ -292,7 +326,7 @@ where
             GdbStubStateMachine::Disconnected(gdb) => {
                 target.monitor_status = MonitorStatus::ResumingProgram;
                 Ok(gdb.return_to_idle())
-            },
+            }
         }
     }
 }

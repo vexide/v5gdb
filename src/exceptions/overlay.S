@@ -14,7 +14,7 @@ v5gdb_debugger_vector_table:
     b prefetch_abort_handler    @ Prefetch abort
     b data_abort_handler        @ Data abort
     nop                         @ Not used
-    ldr pc, original_irq_addr   @ IRQ interrupt
+    b v5gdb_irq_handler         @ IRQ interrupt
     ldr pc, original_fiq_addr   @ FIQ interrupt
 
 @ This is an array of pointers to each offset of the base vector table.
@@ -32,6 +32,19 @@ v5gdb_original_vector_addresses:
     .word 0
     original_irq_addr: .word 0
     original_fiq_addr: .word 0
+
+@ Intercept IRQ exceptions so can periodically poll the debugger without user code cooperation.
+@
+@ We intentionally avoid identifying the interrupt source here (by reading ICCIAR) since that would
+@ ACK the interrupt which isn't our responsibility. Instead the `v5gdb_irq_poll` is responsible
+@ for ratelimiting itself to avoid taking up too much time from user code.
+v5gdb_irq_handler:
+    @ Save caller-saved registers and the exception return address since `bl` will clobber `lr`.
+    push {r0-r3, r12, lr}
+    bl v5gdb_irq_poll
+    pop {r0-r3, r12, lr}
+    @ Chain to the original IRQ handler, which will perform the actual exception return.
+    ldr pc, original_irq_addr
 
 @ These vector table handlers will fall through for normal aborts, but debug events are caught and
 @ redirected to the Rust breakpoint handling logic.

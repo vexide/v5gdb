@@ -78,6 +78,13 @@ pub unsafe trait Debugger: Send + Sync + Any {
     ///
     /// The given fault must represent valid, saved CPU state.
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool;
+
+    /// An asynchronous callback which is run from an IRQ handler every few milliseconds.
+    ///
+    /// This is used to maintain the debugger and works even if user code becomes stuck or
+    /// misbehaves. Since this is called from an interrupt context, it must be non-blocking and
+    /// avoid operations that aren't thread-safe (such as writing to serial).
+    fn poll(&self) {}
 }
 
 /// Set the current debugger.

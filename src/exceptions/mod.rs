@@ -94,7 +94,7 @@ pub(crate) mod arm {
         array,
         ffi::c_void,
         mem::MaybeUninit,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
 
     use aarch32_cpu::asm::dsb;
@@ -138,6 +138,62 @@ pub(crate) mod arm {
     #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) -> bool {
         unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) }
+    }
+
+    /// Minimum interval, in milliseconds, between calls to `Debugger::poll`.
+    const IRQ_POLL_INTERVAL_MS: u32 = 10;
+
+    /// The system time (ms) at which the IRQ hook last ran `Debugger::poll`.
+    static LAST_POLL_TIME_MS: AtomicU32 = AtomicU32::new(0);
+
+    /// Total number of times [`irq_poll`] has been invoked (# of IRQs intercepted).
+    static IRQ_POLL_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    /// Gets diagnostics regarding the IRQ hook. This can be used to ensure the IRQ handler is
+    /// actually being invoked.
+    #[must_use]
+    pub fn irq_poll_stats() -> IrqPollStats {
+        IrqPollStats {
+            poll_count: IRQ_POLL_COUNT.load(Ordering::Relaxed),
+            last_poll_ms: LAST_POLL_TIME_MS.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Snapshot of the IRQ hook diagnostics returned by [`irq_poll_stats`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct IrqPollStats {
+        /// Total number of IRQs intercepted.
+        pub poll_count: u32,
+        /// System time (ms) of the last `Debugger::poll`.
+        pub last_poll_ms: u32,
+    }
+
+    /// IRQ handler callback.
+    ///
+    /// This is called from `v5gdb_irq_handler` at the beginning of every IRQ exception and is
+    /// responsible for periodically invoking [`Debugger::poll`](crate::Debugger::poll).
+    ///
+    /// # Notes
+    ///
+    /// This runs in interrupt context on VEXos's 8 KiB IRQ-mode stack, so it must remain fairly
+    /// lightweight with no allocation or blocking or calls to non-thread-safe functions.
+    #[unsafe(export_name = "v5gdb_irq_poll")]
+    #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
+    pub extern "aapcs" fn irq_poll() {
+        IRQ_POLL_COUNT.fetch_add(1, Ordering::Relaxed);
+
+        let now = unsafe { vex_sdk::vexSystemTimeGet() };
+        let last = LAST_POLL_TIME_MS.load(Ordering::Relaxed);
+
+        // `wrapping_sub` keeps this correct across a u32 millisecond wraparound.
+        if now.wrapping_sub(last) < IRQ_POLL_INTERVAL_MS {
+            return;
+        }
+        LAST_POLL_TIME_MS.store(now, Ordering::Relaxed);
+
+        if let Some(debugger) = DEBUGGER.get() {
+            debugger.poll();
+        }
     }
 
     static ORIGINAL_VECTOR_ADDRESSES_SET: AtomicBool = AtomicBool::new(false);
