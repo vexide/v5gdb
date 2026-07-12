@@ -245,26 +245,40 @@ impl V5Target {
     /// to break out of situations that a single step would not be able to handle, such as a
     /// self-branch (`b .`) in which the program becomes stuck and never advances to the next
     /// instruction.
-    pub fn request_interrupt(&mut self) -> Result<(), BreakpointError> {
+    pub fn request_interrupt(&mut self) {
         // No need to register another interrupt breakpoint if we already have one ready.
         if self.interrupt_pending {
-            return Ok(());
+            return;
         }
 
         let was_locked = self.hw_manager.locked();
         self.hw_manager.set_locked(false);
 
+        // We always reserve a slot for single steps which we can reuse for this interrupt. If a
+        // single step is already active we'll just overwrite that breakpoint slot.
+        if let Some(single_step) = self.single_step_request {
+            self.hw_manager.remove_breakpoint_at(
+                single_step.target_addr,
+                Specificity::Mismatch,
+                single_step.kind,
+            );
+        }
+
         let result = self.hw_manager.add_breakpoint_at(
             ASYNC_HALT_SENTINEL,
             Specificity::Mismatch,
+            // The breakpoint kind doesn't really matter here since it just describes how large the
+            // dead-zone region we specify is, but the one we specify (ASYNC_HALT_SENTINEL) wouldn't
+            // contain either 2-byte or 4-byte instructions.
             ArmBreakpointKind::Arm32,
         );
 
         self.hw_manager.set_locked(was_locked);
 
-        result?;
+        // This shouldn't fail because we pass a known good address and ensure there's enough
+        // available breakpoint slots.
+        result.unwrap();
         self.interrupt_pending = true;
-        Ok(())
     }
 
     /// Remove a breakpoint installed by [`Self::request_interrupt`], if any.

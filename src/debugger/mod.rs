@@ -118,11 +118,7 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
             return;
         }
 
-        // TODO(ctrlc): This will fail if we run out of hardware breakpoints which results in a
-        // situation with no feedback for the user that anything has happened. We should, in this
-        // case, overwrite the hardware breakpoint reserved for single stepping and use it to stop
-        // on the current instruction instead.
-        _ = session.target.request_interrupt();
+        session.target.request_interrupt();
     }
 }
 

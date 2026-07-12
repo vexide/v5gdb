@@ -1,7 +1,7 @@
 //! Ctrl-C halt test.
 //!
 //! Usage:
-//! 1. Terminal A: `v5gdb --tcp 127.0.0.1:35537` (connects to v5gdb server).
+//! 1. Terminal A: `v5gdb --tcp 127.0.0.1:35537` (connects to v5gdb debugger on V5 brain).
 //! 2. Terminal B: `gdb target/armv7a-vex-v5/debug/examples/spin -ex "target remote :35537"`.
 //! 3. In GDB: `continue`, then press Ctrl-C.
 //!
