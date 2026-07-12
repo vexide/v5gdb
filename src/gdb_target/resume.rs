@@ -48,7 +48,7 @@ impl MultiThreadResume for V5Target {
 
 impl SingleThreadSingleStep for V5Target {
     fn step(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
-        self.setup_single_step().expect("Couldn't set up single step");
+        self.request_single_step().expect("Couldn't set up single step");
         self.monitor_status = MonitorStatus::ResumingProgram;
         Ok(())
     }
@@ -65,7 +65,7 @@ impl MultiThreadSingleStep for V5Target {
             System::current_thread()
         );
         if tid == System::current_thread() {
-            self.setup_single_step().expect("Couldn't set up single step");
+            self.request_single_step().expect("Couldn't set up single step");
             Ok(())
         } else {
             unimplemented!("Can't single step a different thread");

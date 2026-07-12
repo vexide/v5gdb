@@ -1,10 +1,6 @@
 //! Main debugger loop and event handling logic.
 
-use core::{
-    convert::Infallible,
-    mem,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::{convert::Infallible, mem};
 
 use derive_more::From;
 use gdbstub::{
@@ -110,34 +106,24 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         // serial. Serial writes aren't IRQ-safe, and logger tend to write to stdout (serial ch1),
         // so also avoid logging here.
 
-        // A failed try_lock means the monitor is active (or briefly busy). In that case the serial
-        // stream carries real GDB protocol traffic so we shouldn't touch it.
-        let Some(_session) = self.session.try_lock() else {
+        // A failed try_lock means the monitor is active. In that case the serial stream carries
+        // real GDB protocol traffic so we shouldn't touch it.
+        let Some(mut session) = self.session.try_lock() else {
             return;
         };
 
         // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
         const CTRL_C: i32 = 0x03;
-        if unsafe { vex_sdk::vexSerialPeekChar(1) } != CTRL_C {
+        if unsafe { vex_sdk::vexSerialReadChar(1) } != CTRL_C {
             return;
         }
 
-        // Consume the interrupt byte so it doesn't linger in the FIFO.
-        unsafe {
-            vex_sdk::vexSerialReadChar(1);
-        }
-
-        ASYNC_HALT_REQUESTS.fetch_add(1, Ordering::Relaxed);
+        // TODO(ctrlc): This will fail if we run out of hardware breakpoints which results in a
+        // situation with no feedback for the user that anything has happened. We should, in this
+        // case, overwrite the hardware breakpoint reserved for single stepping and use it to stop
+        // on the current instruction instead.
+        _ = session.target.request_interrupt();
     }
-}
-
-/// Number of Ctrl-C (`0x03`) async-halt requests observed by [`V5Debugger::poll`].
-static ASYNC_HALT_REQUESTS: AtomicU32 = AtomicU32::new(0);
-
-/// Returns how many async-halt (Ctrl-C) requests the debugger has received.
-#[must_use]
-pub fn async_halt_request_count() -> u32 {
-    ASYNC_HALT_REQUESTS.load(Ordering::Relaxed)
 }
 
 /// What shall be done after a breakpoint has been acknowledged.
