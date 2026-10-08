@@ -3,8 +3,11 @@
 
 .set SIZEOF_DebugEventContext, 0x148
 .set DebugEventContext.sp, 0x4
+.set DebugEventContext.fpscr, 0xc
+.set DebugEventContext.gp_regs, 0x110
+.set DebugEventContext.pc, 0x144
 .if SIZEOF_DebugEventContext % 8 != 0
-    .error "expect multiple of 8 for copy"
+    .error "expect multiple of 8 to keep the abort stack aligned"
 .endif
 
 .set MODE_ABT, 0b10111
@@ -168,36 +171,48 @@ catch_debug_event:
     cmp r0, #0
     beq .Lrestore_without_rtos_resume
 
-    @ We can't yield yet since we still have a bunch of state on the abort stack; if we did, another
-    @ task might hit its own breakpoint, reenter abort mode, and write its own state. This could
-    @ lead to us then popping the other task's state off the stack. Resolve this by copying
-    @ everything to the user-mode stack.
-    mov r0, sp
-    add r1, sp, #SIZEOF_DebugEventContext
-    ldr r2, [sp, #DebugEventContext.sp]
-    cps #MODE_SYS
-    bic sp, r2, #0b111 @ Align the user's stack.
-.Lcopy_to_user_stack_loop:
-    @ Walk backwards towards the front of the debug event, pushing each 8-byte chunk onto the stack.
-    ldmdb r1!, {r3,r4}
-    push {r3,r4}
-    cmp r0, r1
-    bne .Lcopy_to_user_stack_loop
+    @ Important: Restore *all* state before calling xTaskResumeAll; if we leave anything on the
+    @ Abort mode stack, a breakpoint during the yield might push to that. Then when we return here
+    @ we'd try to pop off the newly pushed data instead of our own task's state.
 
-    @ Now that we've copied everything over, free the debug event from the abort stack.
-    cps #MODE_ABT
+    mov r0, sp
     add sp, #SIZEOF_DebugEventContext
 
-    @ Resume tasks - this might yield. This requires us to be in System mode.
-    @ This is AAPCS so some regs may be clobbered; OK since everything is on the stack.
     cps #MODE_SYS
-    blx xTaskResumeAll @ fn() -> u32
+    ldm r0, {r2,r3,lr}  @ cpsr, user stack, lr
+    ldr r1, [r0, #DebugEventContext.pc]
+    @ Exception return frame; this needs a 4-aligned user stack (TODO: enforce this)
+    stmdb r3!, {r1,r2}
+    bic sp, r3, #0b111
+    @ Set up a pointer to the frame so we can grab it later without using GP regs.
+    push {r3,r4} @ (r4 is just padding.)
 
-    @ Turn interrupts back off after the context switch and go back to abort mode so we're allowed
-    @ to do an exception return.
-    mov r0, sp
-    cpsid if, #MODE_ABT
-    b v5gdb_restore_user_state
+    @ VFP regs
+    add r1, r0, #DebugEventContext.fpscr
+    ldm r1!, {r2}
+    vmsr fpscr, r2
+    vldm r1!, {d0-d15}
+    vldm r1!, {d16-d31}
+
+    @ GP regs
+    add r0, #DebugEventContext.gp_regs
+    ldm r0, {r0-r12}
+
+    @ Resume the RTOS.
+    @ Note: xTaskResumeAll is AAPCS, which means it's allowed to clobber the caller-saved fp regs
+    @ (d0-d7, d16-d31, fpscr). This shouldn't be an issue today because nothing reachable from
+    @ rtos_resume_all uses VFP or makes indirect calls. FP regs are already saved during yields
+    @ (which push them all to the stack), so not pushing every FP reg here avoids duplicating that.
+    push {r0-r3,r12,lr}
+    blx xTaskResumeAll @ fn() -> u32
+    pop {r0-r3,r12,lr}
+
+    @ xTaskResumeAll enables IRQs, although this shouldn't be an issue since everything we need is
+    @ on the user stack.
+
+    @ Grab our exception return frame, then load user's PC and cpsr from stack
+    ldr sp, [sp]
+    rfeia sp!
 .endif
 .Lrestore_without_rtos_resume:
     @ Clean up our stack, then restore.
@@ -214,7 +229,7 @@ v5gdb_restore_user_state:
     @ Prepare CPU mode and special regs for the user.
     ldm r0, {r1,sp,lr}^
     add r0, #12
-    msr spsr, r1
+    msr spsr_fsxc, r1
 
     @ Floating-point/simd registers
     ldm r0!, {r1}

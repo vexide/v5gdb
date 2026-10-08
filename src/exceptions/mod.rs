@@ -28,8 +28,19 @@ pub struct DebugEventContext {
     pub program_counter: u32,
 }
 
-// This size is assumed in overlay.s, so take a good look at that before changing this!
-const _: () = assert!(size_of::<DebugEventContext>() == 0x148);
+// This layout is assumed in overlay.s, so take a good look at that before changing this!
+const _: () = {
+    use core::mem::offset_of;
+
+    assert!(size_of::<DebugEventContext>() == 0x148);
+    assert!(offset_of!(DebugEventContext, cpsr) == 0x0);
+    assert!(offset_of!(DebugEventContext, stack_pointer) == 0x4);
+    assert!(offset_of!(DebugEventContext, link_register) == 0x8);
+    assert!(offset_of!(DebugEventContext, fpscr) == 0xc);
+    assert!(offset_of!(DebugEventContext, vfp_registers) == 0x10);
+    assert!(offset_of!(DebugEventContext, registers) == 0x110);
+    assert!(offset_of!(DebugEventContext, program_counter) == 0x144);
+};
 
 impl Registers for DebugEventContext {
     type ProgramCounter = u32;
