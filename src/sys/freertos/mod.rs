@@ -254,8 +254,8 @@ const MONITOR_HELP: &str = r#"FreeRTOS-specific commands:
                                         * Name: Task name
                                         * State: The scheduling state of the task.
                                         * Priority: The scheduling priority of the task.
-                                        * Stack Remaining: The amount of bytes in the task's stack
-                                        which have never been used.
+                                        * Stack Remaining: The number of words (4 bytes each) in the
+                                        task's stack which have never been used.
 "#;
 
 fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
