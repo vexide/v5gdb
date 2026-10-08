@@ -2,6 +2,11 @@
 .arm
 
 .set SIZEOF_DebugEventContext, 0x148
+.set MODE_ABT, 0b10111
+.set MODE_SYS, 0b11111
+.if SIZEOF_DebugEventContext % 8 != 0
+    .error "expect multiple of 8 for copy"
+.endif
 .ifdef PROS
     .set xTaskResumeAll, rtos_resume_all
 .endif
@@ -158,28 +163,31 @@ catch_debug_event:
 
     @ We can't yield yet since we still have a bunch of state on the abort stack; if we did, another
     @ task might hit its own breakpoint, reenter abort mode, and write its own state. This could
-    @ lead to us then popping the other task's state off the stack. Resolve this by moving
+    @ lead to us then popping the other task's state off the stack. Resolve this by copying
     @ everything to the user-mode stack.
     mov r0, sp
-    add sp, #SIZEOF_DebugEventContext @ Pop everything from the stack
-    mov r1, sp
-    cps #0b11111 @ System Mode, so we can access the user stack.
-
-    bic sp, sp, #0b111 @ Align the stack.
+    add r1, sp, #SIZEOF_DebugEventContext
+    cps #MODE_SYS
+    bic sp, sp, #0b111 @ Align the user's stack.
 .Lcopy_to_user_stack_loop:
-    ldmdb r1!, {r3,r4} @ We're moving a multiple of 8 bytes.
+    ldmdb r1!, {r3,r4}
     push {r3,r4}
     cmp r0, r1
     bne .Lcopy_to_user_stack_loop
 
+    @ Now that we've copied everything over, free the debug event from the abort stack.
+    cps #MODE_ABT
+    add sp, #SIZEOF_DebugEventContext
+
     @ Resume tasks - this might yield. This requires us to be in System mode.
     @ This is AAPCS so some regs may be clobbered; OK since everything is on the stack.
+    cps #MODE_SYS
     blx xTaskResumeAll @ fn() -> u32
 
     @ Turn interrupts back off after the context switch and go back to abort mode so we're allowed
     @ to do an exception return.
     mov r0, sp
-    cpsid if, #0b10111
+    cpsid if, #MODE_ABT
     b v5gdb_restore_user_state
 .endif
 .Lrestore_without_rtos_resume:
