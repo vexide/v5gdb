@@ -1,9 +1,15 @@
 .text
 .arm
 
+.set SIZEOF_DebugEventContext, 0x148
+.ifdef PROS
+    .set xTaskResumeAll, rtos_resume_all
+.endif
+
 @ An overlay vector table that intercepts debug exception (breakpoints and watchpoints) but
 @ otherwise delegates exceptions to an existing vector table.
 .global v5gdb_debugger_vector_table
+.type v5gdb_debugger_vector_table, %object
 .align 5
 v5gdb_debugger_vector_table:
     @ To fall through to an original vector table entry, we jump to the offset of the
@@ -23,6 +29,7 @@ v5gdb_debugger_vector_table:
 @ evaluating *(original_vector_addresses + N). The latter can be done in just one instruction, which
 @ allows us to use it in the overlay vector table.
 .global v5gdb_original_vector_addresses
+.type v5gdb_original_vector_addresses, %object
 v5gdb_original_vector_addresses:
     original_reset_addr: .word 0
     original_udf_addr: .word 0
@@ -38,6 +45,7 @@ v5gdb_original_vector_addresses:
 @ We intentionally avoid identifying the interrupt source here (by reading ICCIAR) since that would
 @ ACK the interrupt which isn't our responsibility. Instead the `v5gdb_irq_poll` is responsible
 @ for ratelimiting itself to avoid taking up too much time from user code.
+.type v5gdb_irq_handler, %function
 v5gdb_irq_handler:
     @ Save caller-saved registers and the exception return address since `bl` will clobber `lr`.
     push {r0-r3, r12, lr}
@@ -56,6 +64,7 @@ v5gdb_irq_handler:
 
 @ These vector table handlers will fall through for normal aborts, but debug events are caught and
 @ redirected to the Rust breakpoint handling logic.
+.type prefetch_abort_handler, %function
 prefetch_abort_handler:
     dsb @ Workaround for Cortex-A9 erratum (id 775420)
 
@@ -78,6 +87,7 @@ prefetch_abort_handler:
     b catch_debug_event
 
 @ For watchpoints.
+.type data_abort_handler, %function
 data_abort_handler:
     dsb
 
@@ -94,6 +104,7 @@ data_abort_handler:
 @ Saves the current program state after a breakpoint or watchpoint and switches into the debug
 @ monitor for inspection and modification.
 @ The stack should be aligned to 8 bytes when calling this routine.
+.type catch_debug_event, %function
 catch_debug_event:
     @ -- Save --
     @ Create a DebugEventContext struct on the stack.
@@ -127,15 +138,7 @@ catch_debug_event:
 
     @ Prevent ourselves from getting preempted while messing with task state - this is especially
     @ important on systems with a preemptive scheduler (i.e. FreeRTOS).
-    cpsid i
-
-    @ Saved program status
-    pop {r1}
-    msr spsr, r1
-
-    @ Pop user/system mode banked registers back - SP, LR
-    ldm sp, {sp,lr}^
-    add sp, sp, #8
+    cpsid if
 
     @ Re-enable the scheduler if necessary. When configured for FreeRTOS, the debug monitor disables
     @ the task scheduler to prevent other tasks from running while the debugger is editing their
@@ -143,10 +146,6 @@ catch_debug_event:
     @ Note that this happens before we restore the general purpose registers, so we can clobber them
     @ as desired.
 .ifdef FREERTOS
-    .ifdef PROS
-        .set xTaskResumeAll, rtos_resume_all
-    .endif
-
     @ Check the return value from `v5gdb_handle_debug_event`, which indicates whether to resume the
     @ scheduler.
     @ Motivation: This will be false in the case of a single step, since the debugger's immunity
@@ -155,40 +154,55 @@ catch_debug_event:
     @ the abort handler itself. Obviously, single steps are supposed to step *user* code, so this
     @ would be suboptimal.
     cmp r0, #0
-    beq .Lafter_freertos_scheduler_unpause
+    beq .Lrestore_without_rtos_resume
 
-    @ Switch to System Mode -- resuming the scheduler can yield, which is only sound if the CPU is
-    @ in System Mode.
-    @ NB. This will set the current stack to the system mode stack, which has already been updated
-    @ (above) to its new location. LR and SPSR are also banked.
-    cps #0b11111
-
-    @ (Save old stack ptr, then...) Align stack to 8 bytes for the AAPCS call
+    @ We can't yield yet since we still have a bunch of state on the abort stack; if we did, another
+    @ task might hit its own breakpoint, reenter abort mode, and write its own state. This could
+    @ lead to us then popping the other task's state off the stack. Resolve this by moving
+    @ everything to the user-mode stack.
     mov r0, sp
-    bic sp, sp, #0b111
+    add sp, #SIZEOF_DebugEventContext @ Pop everything from the stack
+    mov r1, sp
+    cps #0b11111 @ System Mode, so we can access the user stack.
 
-    @ Resume tasks - this might yield. It's important this is run with the system/user mode stack
-    @ to prevent false positive stack overflow checks.
-    push {r0,lr}
+    bic sp, sp, #0b111 @ Align the stack.
+.Lcopy_to_user_stack_loop:
+    ldmdb r1!, {r3,r4} @ We're moving a multiple of 8 bytes.
+    push {r3,r4}
+    cmp r0, r1
+    bne .Lcopy_to_user_stack_loop
+
+    @ Resume tasks - this might yield. This requires us to be in System mode.
+    @ This is AAPCS so some regs may be clobbered; OK since everything is on the stack.
     blx xTaskResumeAll @ fn() -> u32
-    pop {r0,lr}
 
-    @ Restore stack pointer to previous value
-    mov sp, r0
-
-    @ Switch back to abort mode so that we restore the rest of the saved registers from the task.
-    @ This is also necessary so that the current SPSR is the one we popped into (SPSR_abt).
-    cps #0b10111
-.Lafter_freertos_scheduler_unpause:
+    @ Turn interrupts back off after the context switch and go back to abort mode so we're allowed
+    @ to do an exception return.
+    mov r0, sp
+    cpsid if, #0b10111
+    b v5gdb_restore_user_state
 .endif
+.Lrestore_without_rtos_resume:
+    @ Clean up our stack, then restore.
+    mov r0, sp
+    add sp, #SIZEOF_DebugEventContext
+    @ [Fall through to v5gdb_restore_user_state]
+
+@ Applies a DebugEventContext; does not push/pop from the stack.
+@ Params: r0: *const DebugEventContext
+@ Prerequisites: CPU in Abort mode, interrupts off.
+.type v5gdb_restore_user_state, %function
+v5gdb_restore_user_state:
+    @ Prepare CPU mode and special regs for the user.
+    ldm r0, {r1,sp,lr}^
+    add r0, #12
+    msr spsr, r1
 
     @ Floating-point/simd registers
-    pop {r0}
-    vmsr fpscr, r0
-    vpop {d0-d15}
-    vpop {d16-d31}
+    ldm r0!, {r1}
+    vmsr fpscr, r1
+    vldm r0!, {d0-d15}
+    vldm r0!, {d16-d31}
 
-    @ And... perform an exception return by loading the old LR_abt into PC.
-    @ Note that we've already offset LR as required to point to the correct exception return
-    @ address.
-    ldm sp!, {r0-r12, pc}^
+    @ User regs & PC. This applies the spsr we set earlier.
+    ldm r0, {r0-r12,pc}^

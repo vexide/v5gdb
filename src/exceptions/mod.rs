@@ -28,6 +28,9 @@ pub struct DebugEventContext {
     pub program_counter: u32,
 }
 
+// This size is assumed in overlay.s, so take a good look at that before changing this!
+const _: () = assert!(size_of::<DebugEventContext>() == 0x148);
+
 impl Registers for DebugEventContext {
     type ProgramCounter = u32;
 
