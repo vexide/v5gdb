@@ -2,11 +2,13 @@
 .arm
 
 .set SIZEOF_DebugEventContext, 0x148
-.set MODE_ABT, 0b10111
-.set MODE_SYS, 0b11111
+.set DebugEventContext.sp, 0x4
 .if SIZEOF_DebugEventContext % 8 != 0
     .error "expect multiple of 8 for copy"
 .endif
+
+.set MODE_ABT, 0b10111
+.set MODE_SYS, 0b11111
 .ifdef PROS
     .set xTaskResumeAll, rtos_resume_all
 .endif
@@ -14,7 +16,7 @@
 @ An overlay vector table that intercepts debug exception (breakpoints and watchpoints) but
 @ otherwise delegates exceptions to an existing vector table.
 .global v5gdb_debugger_vector_table
-.type v5gdb_debugger_vector_table, %object
+.type v5gdb_debugger_vector_table, %function
 .align 5
 v5gdb_debugger_vector_table:
     @ To fall through to an original vector table entry, we jump to the offset of the
@@ -27,6 +29,7 @@ v5gdb_debugger_vector_table:
     nop                         @ Not used
     b v5gdb_irq_handler         @ IRQ interrupt
     ldr pc, original_fiq_addr   @ FIQ interrupt
+.size v5gdb_debugger_vector_table, . - v5gdb_debugger_vector_table
 
 @ This is an array of pointers to each offset of the base vector table.
 @ When configured at runtime, each entry is (original_vector_table + <OFFSET> * 4).
@@ -44,6 +47,7 @@ v5gdb_original_vector_addresses:
     .word 0
     original_irq_addr: .word 0
     original_fiq_addr: .word 0
+.size v5gdb_original_vector_addresses, . - v5gdb_original_vector_addresses
 
 @ Intercept IRQ exceptions so can periodically poll the debugger without user code cooperation.
 @
@@ -66,6 +70,7 @@ v5gdb_irq_handler:
     pop {r0-r3, r12, lr}
     @ Chain to the original IRQ handler, which will perform the actual exception return.
     ldr pc, original_irq_addr
+.size v5gdb_irq_handler, . - v5gdb_irq_handler
 
 @ These vector table handlers will fall through for normal aborts, but debug events are caught and
 @ redirected to the Rust breakpoint handling logic.
@@ -90,6 +95,7 @@ prefetch_abort_handler:
     ldrne pc, original_prefetch_abt_addr
     sub lr, #4  @ Offset LR to match the preferred return address (see B1.9.7 in ARMv7-A manual).
     b catch_debug_event
+.size prefetch_abort_handler, . - prefetch_abort_handler
 
 @ For watchpoints.
 .type data_abort_handler, %function
@@ -105,6 +111,7 @@ data_abort_handler:
     ldrne pc, original_data_abt_addr
     sub lr, #8  @ Offset LR to match the preferred return address (see B1.9.8 in ARMv7-A manual).
     b catch_debug_event
+.size data_abort_handler, . - data_abort_handler
 
 @ Saves the current program state after a breakpoint or watchpoint and switches into the debug
 @ monitor for inspection and modification.
@@ -167,9 +174,11 @@ catch_debug_event:
     @ everything to the user-mode stack.
     mov r0, sp
     add r1, sp, #SIZEOF_DebugEventContext
+    ldr r2, [sp, #DebugEventContext.sp]
     cps #MODE_SYS
-    bic sp, sp, #0b111 @ Align the user's stack.
+    bic sp, r2, #0b111 @ Align the user's stack.
 .Lcopy_to_user_stack_loop:
+    @ Walk backwards towards the front of the debug event, pushing each 8-byte chunk onto the stack.
     ldmdb r1!, {r3,r4}
     push {r3,r4}
     cmp r0, r1
@@ -195,6 +204,7 @@ catch_debug_event:
     mov r0, sp
     add sp, #SIZEOF_DebugEventContext
     @ [Fall through to v5gdb_restore_user_state]
+.size catch_debug_event, . - catch_debug_event
 
 @ Applies a DebugEventContext; does not push/pop from the stack.
 @ Params: r0: *const DebugEventContext
@@ -214,3 +224,4 @@ v5gdb_restore_user_state:
 
     @ User regs & PC. This applies the spsr we set earlier.
     ldm r0, {r0-r12,pc}^
+.size v5gdb_restore_user_state, . - v5gdb_restore_user_state
