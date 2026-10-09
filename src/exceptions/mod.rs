@@ -111,7 +111,8 @@ pub(crate) mod arm {
         sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
 
-    use aarch32_cpu::asm::dsb;
+    use aarch32_cpu::asm::{dsb, isb};
+    use zynq7000::gic;
 
     use crate::{
         DEBUGGER,
@@ -159,29 +160,83 @@ pub(crate) mod arm {
     /// The system time (ms) at which the IRQ hook last ran `Debugger::poll`.
     static LAST_POLL_TIME_MS: AtomicU32 = AtomicU32::new(0);
 
+    /// Whether `v5gdb_irq_handler` should service IRQs itself instead of chaining to the user's
+    /// IRQ handler.
+    ///
+    /// Framework IRQ handlers may switch into a CPU mode where hardware breakpoints fire (PROS does
+    /// this) or cause race conditions with data accessed by the debugger. This must be set whenever
+    /// that would be a problem, including whenever the debug monitor is active and while a single
+    /// step / async halt is armed (otherwise it could fire inside the PROS IRQ handler instead of
+    /// in the interrupted code).
+    static BYPASS_USER_IRQ: AtomicBool = AtomicBool::new(false);
+
+    /// Sets whether v5gdb services IRQs manually instead of relying on the user/framework's ISRs.
+    ///
+    /// This can be enabled to avoid accidentally running user code when the program should be
+    /// paused, but should be turned back off during normal execution so context switches and any
+    /// custom IRQ handlers work as expected.
+    pub(crate) fn set_user_irq_bypass(bypass: bool) {
+        BYPASS_USER_IRQ.store(bypass, Ordering::Relaxed);
+    }
+
     /// IRQ handler callback.
     ///
     /// This is called from `v5gdb_irq_handler` at the beginning of every IRQ exception and is
     /// responsible for periodically invoking [`Debugger::poll`](crate::Debugger::poll).
+    ///
+    /// Returns whether the IRQ should bypass the user's IRQ handler and be serviced by
+    /// [`irq_dispatch`] instead.
     ///
     /// # Notes
     ///
     /// This runs in interrupt context on VEXos's 8 KiB IRQ-mode stack, so it must remain fairly
     /// lightweight with no allocation or blocking or calls to non-thread-safe functions.
     #[unsafe(export_name = "v5gdb_irq_poll")]
-    pub extern "aapcs" fn irq_poll() {
+    pub extern "aapcs" fn irq_poll() -> bool {
         let now = unsafe { vex_sdk::vexSystemTimeGet() };
         let last = LAST_POLL_TIME_MS.load(Ordering::Relaxed);
 
         // `wrapping_sub` keeps this correct across a u32 millisecond wraparound.
-        if now.wrapping_sub(last) < IRQ_POLL_INTERVAL_MS {
-            return;
-        }
-        LAST_POLL_TIME_MS.store(now, Ordering::Relaxed);
+        if now.wrapping_sub(last) >= IRQ_POLL_INTERVAL_MS {
+            LAST_POLL_TIME_MS.store(now, Ordering::Relaxed);
 
-        if let Some(debugger) = DEBUGGER.get() {
-            debugger.poll();
+            if let Some(debugger) = DEBUGGER.get() {
+                debugger.poll();
+            }
         }
+
+        // This is read after polling since that may have updated it (e.g. for an async halt).
+        BYPASS_USER_IRQ.load(Ordering::Relaxed)
+    }
+
+    /// Services an IRQ by directly calling into VEXos's interrupt handlers.
+    ///
+    /// # Safety
+    ///
+    /// - Must only be called from `v5gdb_irq_handler` in Abort mode with IRQs disabled.
+    /// - This function will re-enable interrupts internally, but they will be disabled again before
+    ///   returning.
+    #[unsafe(export_name = "v5gdb_irq_dispatch")]
+    unsafe extern "aapcs" fn irq_dispatch() {
+        // See also FreeRTOS_IRQ_Handler from PROS.
+
+        // SAFETY: We only service interrupts from the IRQ handler, so there is no risk of a
+        // data race.
+        let mut gicc = unsafe { gic::CpuInterfaceRegisters::new_mmio_fixed() };
+
+        let iar = gicc.read_iar();
+        // This will re-enable interrupts.
+        unsafe {
+            vex_sdk::vexSystemApplicationIRQHandler(iar.raw_value());
+        }
+
+        // Disable IRQs again so that writing to EOIR doesn't allow the same priority of interrupt
+        // to be immediately taken before we clean up the stack.
+        aarch32_cpu::interrupt::disable();
+        dsb(); // Ensure IRQs are masked before starting on the EOIR write.
+        isb();
+
+        gicc.write_eoir(iar);
     }
 
     static ORIGINAL_VECTOR_ADDRESSES_SET: AtomicBool = AtomicBool::new(false);

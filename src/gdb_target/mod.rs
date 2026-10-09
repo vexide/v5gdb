@@ -25,7 +25,7 @@ use zynq7000::devcfg;
 
 use crate::{
     cpu::debug::DebugEventReason,
-    exceptions::DebugEventContext,
+    exceptions::{self, DebugEventContext},
     gdb_target::{
         arch::{ArmBreakpointKind, ArmV7},
         breakpoint::{
@@ -161,6 +161,9 @@ impl V5Target {
         if self.single_step_request.is_none() {
             System::suspend_preemption();
         }
+        // User IRQ handlers tend to mess with CPU state in ways that are incompatible with the
+        // debugger, so keep them from running while paused.
+        exceptions::set_user_irq_bypass(true);
         unsafe {
             aarch32_cpu::interrupt::enable();
         }
@@ -186,17 +189,29 @@ impl V5Target {
     }
 
     /// Deactivate the debugger and apply pending changes.
+    ///
+    /// Returns whether the RTOS scheduler (if it exists) should be unpaused now that we're about to
+    /// return to user code.
     pub fn leave_breakpoint(&mut self, ctx: &mut DebugEventContext) -> bool {
         // Write back any modifications back so the debug event handler can apply them.
         *ctx = self.exception_ctx.clone();
 
         log::debug!("Exiting debug event handler");
 
+        let resuming_to_full = self.single_step_request.is_none() && !self.interrupt_pending;
         // Single steps run with the scheduler off so that we are guaranteed to step the current
         // task, not a different one. - Side note: If PROS implemented ARM's context id register, we
         // could just filter the single step breakpoint by task id and there would be no need for
         // this.
-        let should_unpause_scheduler = self.single_step_request.is_none();
+        let should_unpause_scheduler = resuming_to_full;
+
+        // Once we leave the debug monitor, we may want to re-enable user IRQ handlers, but now is
+        // an awkward time to do that since an IRQ might trigger while we are in the middle of
+        // restoring state - so disable IRQs entirely until we resume.
+        aarch32_cpu::interrupt::disable();
+        // If we want to single-step or trigger an an async halt we keep user IRQ handlers disabled
+        // to ensure we step through main thread code rather than into an ISR.
+        exceptions::set_user_irq_bypass(!resuming_to_full);
 
         self.hw_manager.set_locked(self.original_hw_lock_state);
         self.set_breakpoints_ignored(false);
@@ -281,6 +296,9 @@ impl V5Target {
         // available breakpoint slots.
         result.unwrap();
         self.interrupt_pending = true;
+        // Ctrl-C events should pause in main thread code instead of the user's framework IRQ
+        // handler, so handle IRQs ourselves until we resume user code.
+        exceptions::set_user_irq_bypass(true);
     }
 
     /// Remove a breakpoint installed by [`Self::request_interrupt`], if any.

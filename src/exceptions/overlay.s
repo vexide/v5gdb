@@ -10,6 +10,7 @@
     .error "expect multiple of 8 to keep the abort stack aligned"
 .endif
 
+.set MODE_IRQ, 0b10010
 .set MODE_ABT, 0b10111
 .set MODE_SYS, 0b11111
 .ifdef PROS
@@ -54,25 +55,57 @@ v5gdb_original_vector_addresses:
 
 @ Intercept IRQ exceptions so can periodically poll the debugger without user code cooperation.
 @
-@ We intentionally avoid identifying the interrupt source here (by reading ICCIAR) since that would
-@ ACK the interrupt which isn't our responsibility. Instead the `v5gdb_irq_poll` is responsible
-@ for ratelimiting itself to avoid taking up too much time from user code.
+@ Normally we avoid reading ICCIAR (which would ACK the interrupt) and keep interrupt servicing the
+@ responsibility of the user's framework, but when the debugger needs control over which code runs,
+@ we instead service the IRQ ourselves with VEXos's handlers.
+@ This means that sometimes we don't know what kind of interrupt happened, so v5gdb_irq_poll needs
+@ to ratelimit itself manually instead of e.g. only running on 1ms timer interrupts.
 .type v5gdb_irq_handler, %function
 v5gdb_irq_handler:
-    @ Save caller-saved registers and the exception return address since `bl` will clobber `lr`.
+    @ Save caller-saved registers and the exception return address since `blx` will clobber `lr`.
     push {r0-r3, r12, lr}
     vpush {d16-d31}
     vpush {d0-d7}
-    vmrs r0, fpscr
-    push {r0, r1} @ r1 is just a bogus register for stack alignment
-    blx v5gdb_irq_poll
+    vmrs r1, fpscr
+    push {r0, r1} @ r0 is just a bogus register for stack alignment
+
+    blx v5gdb_irq_poll @ fn() -> bool
+    cmp r0, #0
+    bne .Lirq_bypass_user
+
     pop {r0, r1}
-    vmsr fpscr, r0
+    vmsr fpscr, r1
     vpop {d0-d7}
     vpop {d16-d31}
     pop {r0-r3, r12, lr}
     @ Chain to the original IRQ handler, which will perform the actual exception return.
     ldr pc, original_irq_addr
+
+.Lirq_bypass_user:
+    @ VEXos's IRQ handlers re-enable IRQs, so a nested IRQ may overwrite SPSR and LR. We've already
+    @ pushed the latter, so push SPSR_irq as well.
+    mrs r0, spsr
+    str r0, [sp] @ Earlier we pushed r0 as a bogus register, so just reuse that.
+
+    @ Run the handler is Abort mode so nested IRQs don't clobber the LR we're currently using.
+    @ (Normally people use Supervisor mode here, but that would enable breakpoints & single steps.)
+    cps #MODE_ABT
+    @ Abort mode may be in use by the debug monitor, so keep track of the old SP_abt/LR_abt.
+    mov r0, sp
+    bic sp, sp, #0b111 @ Make sure stack is aligned for AAPCS.
+    push {r0, lr}
+    blx v5gdb_irq_dispatch @ fn() -> (), returns with interrupts off
+    pop {r0, lr}
+    mov sp, r0
+    cps #MODE_IRQ
+
+    pop {r0, r1}
+    msr spsr_fsxc, r0
+    vmsr fpscr, r1
+    vpop {d0-d7}
+    vpop {d16-d31}
+    pop {r0-r3, r12, lr}
+    subs pc, lr, #4
 .size v5gdb_irq_handler, . - v5gdb_irq_handler
 
 @ These vector table handlers will fall through for normal aborts, but debug events are caught and
