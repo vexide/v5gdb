@@ -374,33 +374,12 @@ checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
 name = "derive-mmio"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1579d07ce933dabc3d8fe06c529f9a743174bab8a5224b03fe9f0148b5b4c4e8"
-dependencies = [
- "derive-mmio-macro 0.6.2",
- "rustversion",
-]
-
-[[package]]
-name = "derive-mmio"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acd34ba795703e849ab4136e8886fa2140935e2e27640d22c7da6ef5796324af"
 dependencies = [
- "derive-mmio-macro 0.8.0",
+ "derive-mmio-macro",
  "rustversion",
-]
-
-[[package]]
-name = "derive-mmio-macro"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5090bbfffae089eb132236978c9ab39e3b17692f56836f1bd57822572ac030fe"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1418,7 +1397,7 @@ dependencies = [
  "bytemuck",
  "cobs",
  "critical-section",
- "derive-mmio 0.8.0",
+ "derive-mmio",
  "derive_more",
  "gdbstub",
  "log",
@@ -1786,13 +1765,13 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zynq7000"
-version = "0.4.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "786fbd2e5ec98252e54a1a67844a08ec2af672a07be4c2426594956d5592ba2f"
+checksum = "7743bcee69542c41ed2f48fd36ceada825baf6ac9dfac768de651ec5602d0439"
 dependencies = [
  "arbitrary-int",
  "bitbybit",
- "derive-mmio 0.6.2",
+ "derive-mmio",
  "once_cell",
  "rustversion",
  "static_assertions",
