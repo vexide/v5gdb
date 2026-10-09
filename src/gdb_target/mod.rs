@@ -24,17 +24,14 @@ use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
-    cpu::debug::DebugEventReason,
-    exceptions::{self, DebugEventContext},
-    gdb_target::{
+    cpu::{CpuMode, debug::DebugEventReason}, exceptions::{self, DebugEventContext}, gdb_target::{
         arch::{ArmBreakpointKind, ArmV7},
         breakpoint::{
             BreakpointError,
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
-    },
-    sys::{DebuggerSystem, System},
+    }, sys::{DebuggerSystem, System},
 };
 
 pub mod arch;
@@ -169,6 +166,14 @@ impl V5Target {
         }
 
         log::debug!("Entered debug event handler");
+
+        let mode = ctx.cpsr.mode();
+        assert!(
+            mode == Ok(CpuMode::Sys) || mode == Ok(CpuMode::Usr),
+            "triggered breakpoint in unsupported CPU mode {mode:?} at {:#x}",
+            ctx.program_counter,
+        );
+
         static BKPT_LOG: Once = Once::new();
         BKPT_LOG.call_once(|| {
             log::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
@@ -209,7 +214,7 @@ impl V5Target {
         // an awkward time to do that since an IRQ might trigger while we are in the middle of
         // restoring state - so disable IRQs entirely until we resume.
         aarch32_cpu::interrupt::disable();
-        // If we want to single-step or trigger an an async halt we keep user IRQ handlers disabled
+        // If we want to single-step or trigger an async halt we keep user IRQ handlers disabled
         // to ensure we step through main thread code rather than into an ISR.
         exceptions::set_user_irq_bypass(!resuming_to_full);
 

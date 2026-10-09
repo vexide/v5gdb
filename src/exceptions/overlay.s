@@ -87,7 +87,7 @@ v5gdb_irq_handler:
     mrs r0, spsr
     str r0, [sp] @ Earlier we pushed r0 as a bogus register, so just reuse that.
 
-    @ Run the handler is Abort mode so nested IRQs don't clobber the LR we're currently using.
+    @ Run the handler in Abort mode so nested IRQs don't clobber the LR we're currently using.
     @ (Normally people use Supervisor mode here, but that would enable breakpoints & single steps.)
     cps #MODE_ABT
     @ Abort mode may be in use by the debug monitor, so keep track of the old SP_abt/LR_abt.

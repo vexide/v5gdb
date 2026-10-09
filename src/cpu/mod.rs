@@ -1,5 +1,5 @@
 use arbitrary_int::*;
-use bitbybit::bitfield;
+use bitbybit::{bitenum, bitfield};
 
 #[cfg(target_arch = "arm")]
 pub mod cache;
@@ -45,11 +45,24 @@ pub struct ProgramStatus {
     #[bit(5, rw)]
     thumb: bool,
     #[bits(0..=4, rw)]
-    mode: u5,
+    mode: Option<CpuMode>,
 }
 
 impl ProgramStatus {
     pub const fn raw_value_mut(&mut self) -> &mut u32 {
         &mut self.raw_value
     }
+}
+
+#[bitenum(u5, exhaustive = false)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum CpuMode {
+    Usr = 0b10000,
+    Fiq = 0b10001,
+    Irq = 0b10010,
+    Svc = 0b10011,
+    Mon = 0b10110,
+    Abt = 0b10111,
+    Und = 0b11011,
+    Sys = 0b11111,
 }
