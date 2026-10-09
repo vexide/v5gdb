@@ -8,11 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- The new `v5gdb::logging` module allows configuring the debugger's logger.
+- The new `v5gdb::logging` module allows configuring the debugger's logger. (#46)
 
 ### Changed
 
-- Debugger log messages are now printed directly to serial instead of through the global `log` logger. (**Breaking change**)
+- Debugger log messages are now printed directly to serial instead of through the global `log` logger. (**Breaking change**) (#46)
+
+### Fixed
+
+- Fixed a memory safety issue which corrupted FreeRTOS task state when resuming execution. (#42)
+- User IRQ handlers are now skipped when running them could corrupt state, including during single steps. (#42)
+- Triggering a breakpoint from an unsupported CPU mode now causes a panic. (#42)
+- Triggering a breakpoint while another breakpoint is still active now causes a panic. (#42)
+- Recursively entering the debug monitor now panics instead of locking up the system. (#44)
+- Software breakpoint addresses are now validates properly. (#41)
+- The FreeRTOS monitor help now says "Stack Remaining" is measured in words, not bytes.
+
+### New Contributors
+
+- @ion098 made their first contribution in #41!
 
 ## [0.1.0-alpha.2]
 
