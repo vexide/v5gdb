@@ -20,7 +20,7 @@ impl SingleThreadResume for V5Target {
 
 impl MultiThreadResume for V5Target {
     fn clear_resume_actions(&mut self) -> Result<(), Self::Error> {
-        logging::info!("Setup resume");
+        logging::trace!("Clearing resume actions");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
@@ -30,13 +30,13 @@ impl MultiThreadResume for V5Target {
         _tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
-        logging::debug!("Resume action - continue");
+        logging::debug!("Resume action: continue");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
 
     fn resume(&mut self) -> Result<(), Self::Error> {
-        logging::info!("Commit resume");
+        logging::trace!("Committing resume actions");
         self.monitor_status = MonitorStatus::ResumingProgram;
         Ok(())
     }
@@ -60,15 +60,15 @@ impl MultiThreadSingleStep for V5Target {
         tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
-        logging::info!(
-            "Resume action STEP for tid {tid:?} (current = {})",
+        logging::debug!(
+            "Resume action: step thread {tid} (current thread is {})",
             System::current_thread()
         );
         if tid == System::current_thread() {
             self.request_single_step().expect("Couldn't set up single step");
             Ok(())
         } else {
-            unimplemented!("Can't single step a different thread");
+            unimplemented!("Can't single step thread {tid} because it isn't the current thread");
         }
     }
 }

@@ -26,7 +26,9 @@ Monitor commands:
     comp (driver | auton | disabled)    Override competition mode.
     comp (none | fc | switch)           Override competition system.
     comp real                           Stop overriding competition state.
-    log [level]                         Set the current log level (off/trace/debug/info/warn/error).
+    log                                 Show the current log level.
+    log (off | error | warn | info | debug | trace)
+                                        Set the log level.
     dbg break                           Show internal software breakpoint status.
     dbg hw                              Show internal hardware debug status.
 ";
@@ -182,15 +184,18 @@ impl MonitorCmd for V5Target {
                     }
                 }
             }
-            "log" => {
-                if let Some(level) = args.next()
-                    && let Ok(level) = LevelFilter::from_str(level)
-                {
-                    logging::set_max_level(level);
-                } else {
-                    gdbstub::outputln!(out, "Expected off/trace/debug/info/warn/error.")
+            "log" => match args.next().map(LevelFilter::from_str) {
+                None => {
+                    gdbstub::outputln!(out, "Log level: {}", logging::max_level());
                 }
-            }
+                Some(Ok(level)) => {
+                    logging::set_max_level(level);
+                    gdbstub::outputln!(out, "Log level set to {level}.");
+                }
+                Some(Err(_)) => {
+                    gdbstub::outputln!(out, "Expected off/error/warn/info/debug/trace.");
+                }
+            },
             "sys" => {
                 System::handle_monitor_cmd(args, &mut out);
             }

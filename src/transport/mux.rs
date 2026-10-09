@@ -143,7 +143,9 @@ mod user {
     fn tried_to_read() {
         static PROGRAM_TRIED_TO_READ: AtomicBool = AtomicBool::new(false);
         if !PROGRAM_TRIED_TO_READ.swap(true, Ordering::Relaxed) {
-            log::warn!("Reading from serial while the debugger is active is unimplemented!");
+            crate::logging::warn!(
+                "Reading from serial while the debugger is active is unimplemented!"
+            );
         }
     }
 

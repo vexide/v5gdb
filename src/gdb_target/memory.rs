@@ -11,7 +11,7 @@ const SECTION_MASK: u32 = !0 << 20;
 pub fn read_memory(start_addr: u32, data: &mut [u8]) -> usize {
     let end_addr = start_addr.saturating_add(data.len() as u32);
     let readable_bytes = test_access(start_addr..end_addr, false);
-    logging::debug!("Num readable bytes = {readable_bytes}");
+    logging::trace!("Num readable bytes = {readable_bytes}");
 
     let ptr = start_addr as *const u8;
     // SAFETY: We have ensured these sections are readable before accessing them.
@@ -28,7 +28,7 @@ pub fn read_memory(start_addr: u32, data: &mut [u8]) -> usize {
 pub fn write_memory(start_addr: u32, data: &[u8]) -> bool {
     let end_addr = start_addr.saturating_add(data.len() as u32);
     let writable_bytes = test_access(start_addr..end_addr, true);
-    logging::debug!("Num writable bytes = {writable_bytes}");
+    logging::trace!("Num writable bytes = {writable_bytes}");
 
     if writable_bytes < data.len() {
         return false;
@@ -46,7 +46,7 @@ pub fn write_memory(start_addr: u32, data: &[u8]) -> bool {
 /// Given a range of addresses, returns how many bytes can be written to or read from without
 /// faulting.
 fn test_access(mut range: Range<u32>, write: bool) -> usize {
-    logging::debug!("Testing access for addr range {range:?} (write={write})");
+    logging::trace!("Testing access for {:#010x}..{:#010x} (write={write})", range.start, range.end);
 
     let mut check_addr = range.start & SECTION_MASK;
     while check_addr < range.end {

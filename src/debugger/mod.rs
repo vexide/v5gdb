@@ -285,7 +285,7 @@ where
 
         let exit_func = vexSystemExitRequest as *const () as u32;
         let is_thumb = (exit_func & 1) != 0;
-        logging::debug!("Register pre-exit handler (thumb={is_thumb})");
+        logging::debug!("Registering pre-exit handler at {exit_func:#010x} (thumb={is_thumb})");
 
         let internal_breaks = [(InternalBreakpoint::SystemExitRequest, exit_func & !1)];
 
@@ -338,7 +338,7 @@ where
             }
             GdbStubStateMachine::Running(gdb) => {
                 let reported_reason = target.gdb_stop_reason();
-                logging::info!("Debugger Stop reason: {reported_reason:?}");
+                logging::info!("Reporting stop to GDB: {reported_reason:x?}");
 
                 // Once we tell GDB we've exited we should exit the monitor because the session will
                 // end.
@@ -349,11 +349,12 @@ where
                 Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
-                logging::warn!("Got Ctrl+C");
+                logging::warn!("GDB sent an interrupt (Ctrl+C) while already paused");
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }
             GdbStubStateMachine::Disconnected(gdb) => {
+                logging::info!("GDB disconnected: {:?}", gdb.get_reason());
                 // If we're about to exit the program, then GDB is probably disconnecting to let us
                 // do that. In that case, unpause and actually exit. Otherwise, stay in the debug
                 // monitor so a new GDB instance can pick up where we left off.

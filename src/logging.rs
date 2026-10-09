@@ -8,6 +8,8 @@
 //! that `println!` call. Instead, log messages are formatted into a buffer on the stack and written
 //! directly to serial, which doesn't require any locks.
 
+#![allow(unused_macros)]
+
 use core::{
     fmt::{self, Write},
     sync::atomic::{AtomicUsize, Ordering},
@@ -84,8 +86,12 @@ macro_rules! debug {
     ($($arg:tt)+) => { $crate::logging::event!(Debug, $($arg)+) };
 }
 
+macro_rules! trace {
+    ($($arg:tt)+) => { $crate::logging::event!(Trace, $($arg)+) };
+}
+
 #[allow(unused_imports)]
-pub(crate) use {debug, error, event, info, warn_ as warn};
+pub(crate) use {debug, error, event, info, trace, warn_ as warn};
 
 /// Collects formatted output on the stack so that log writes are grouped together into lines.
 struct BufferedSerial {

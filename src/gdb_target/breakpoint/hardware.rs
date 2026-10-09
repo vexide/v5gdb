@@ -15,6 +15,7 @@ use crate::{
         vmsa::with_manager_domain_access,
     },
     gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError},
+    logging,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,14 +411,23 @@ impl HwBreakpoint for V5Target {
     ) -> TargetResult<bool, Self> {
         if self.hw_manager.breakpoints_available() <= 1 {
             // One hardware breakpoint should be saved for single stepping.
+            logging::warn!("Can't add hardware breakpoint at {addr:#010x}: all slots are in use");
             return Ok(false);
         }
 
-        let result = self
+        match self
             .hw_manager
-            .add_breakpoint_at(addr, Specificity::Match, kind);
-
-        Ok(result.is_ok())
+            .add_breakpoint_at(addr, Specificity::Match, kind)
+        {
+            Ok(()) => {
+                logging::info!("Added hardware breakpoint at {addr:#010x} ({kind:?})");
+                Ok(true)
+            }
+            Err(err) => {
+                logging::warn!("Can't add hardware breakpoint at {addr:#010x}: {err}");
+                Ok(false)
+            }
+        }
     }
 
     fn remove_hw_breakpoint(
@@ -428,6 +438,11 @@ impl HwBreakpoint for V5Target {
         let did_remove = self
             .hw_manager
             .remove_breakpoint_at(addr, Specificity::Match, kind);
+        if did_remove {
+            logging::info!("Removed hardware breakpoint at {addr:#010x}");
+        } else {
+            logging::debug!("No hardware breakpoint to remove at {addr:#010x}");
+        }
 
         Ok(did_remove)
     }

@@ -24,14 +24,18 @@ use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
-    cpu::{CpuMode, debug::DebugEventReason}, exceptions::{self, DebugEventContext}, gdb_target::{
+    cpu::{CpuMode, debug::DebugEventReason},
+    exceptions::{self, DebugEventContext},
+    gdb_target::{
         arch::{ArmBreakpointKind, ArmV7},
         breakpoint::{
             BreakpointError,
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
-    }, logging, sys::{DebuggerSystem, System},
+    },
+    logging,
+    sys::{DebuggerSystem, System},
 };
 
 pub mod arch;
@@ -165,8 +169,6 @@ impl V5Target {
             aarch32_cpu::interrupt::enable();
         }
 
-        logging::debug!("Entered debug event handler");
-
         let mode = ctx.cpsr.mode();
         assert!(
             mode == Ok(CpuMode::Sys) || mode == Ok(CpuMode::Usr),
@@ -176,8 +178,7 @@ impl V5Target {
 
         static BKPT_LOG: Once = Once::new();
         BKPT_LOG.call_once(|| {
-            logging::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
-            logging::error!("Your program has been paused. Please connect a debugger.")
+            logging::warn!("Your program has been paused. Please connect a debugger.");
         });
 
         self.original_hw_lock_state = self.hw_manager.locked();
@@ -190,6 +191,13 @@ impl V5Target {
         self.finalize_interrupt();
         self.fixup_manual_bkpt();
 
+        logging::info!(
+            "Stopped at {:#010x} ({:?}, thread {})",
+            ctx.program_counter,
+            self.stop_reason,
+            System::current_thread(),
+        );
+
         self.stop_reason
     }
 
@@ -201,7 +209,12 @@ impl V5Target {
         // Write back any modifications back so the debug event handler can apply them.
         *ctx = self.exception_ctx.clone();
 
-        logging::debug!("Exiting debug event handler");
+        logging::debug!(
+            "Resuming at {:#010x} (single_step={}, interrupt={})",
+            ctx.program_counter,
+            self.single_step_request.is_some(),
+            self.interrupt_pending,
+        );
 
         let resuming_to_full = self.single_step_request.is_none() && !self.interrupt_pending;
         // Single steps run with the scheduler off so that we are guaranteed to step the current
@@ -231,7 +244,10 @@ impl V5Target {
             return Ok(());
         }
 
-        logging::debug!("Preparing single step operation");
+        logging::debug!(
+            "Preparing single step at {:#010x}",
+            self.exception_ctx.program_counter
+        );
 
         let kind = if self.exception_ctx.cpsr.thumb() {
             ArmBreakpointKind::Thumb16
@@ -446,22 +462,23 @@ impl Target for V5Target {
 
 impl SingleThreadBase for V5Target {
     fn read_registers(&mut self, regs: &mut DebugEventContext) -> TargetResult<(), Self> {
-        logging::info!("Reading all registers");
+        logging::trace!("Reading all registers");
         *regs = self.exception_ctx.clone();
         Ok(())
     }
 
     fn write_registers(&mut self, regs: &DebugEventContext) -> TargetResult<(), Self> {
-        logging::info!("Writing all registers");
+        logging::trace!("Writing all registers");
         self.exception_ctx = regs.clone();
         Ok(())
     }
 
     fn read_addrs(&mut self, start_addr: u32, data: &mut [u8]) -> TargetResult<usize, Self> {
-        logging::info!("Read addr {start_addr} for {} bytes", data.len(),);
+        logging::trace!("Reading {} bytes at {start_addr:#010x}", data.len());
 
         let bytes_read = memory::read_memory(start_addr, data);
         if bytes_read == 0 {
+            logging::debug!("Memory at {start_addr:#010x} is not readable");
             return Err(TargetError::Errno(HostIoErrno::EFAULT as u8));
         }
 
@@ -469,11 +486,15 @@ impl SingleThreadBase for V5Target {
     }
 
     fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
-        logging::info!("Write addr {start_addr} for {} bytes", data.len(),);
+        logging::trace!("Writing {} bytes at {start_addr:#010x}", data.len());
 
         if memory::write_memory(start_addr, data) {
             Ok(())
         } else {
+            logging::warn!(
+                "Can't write {} bytes at {start_addr:#010x}: memory is not writable",
+                data.len(),
+            );
             Err(TargetError::Errno(HostIoErrno::EFAULT as u8))
         }
     }

@@ -6,6 +6,7 @@ use crate::{
         instruction::Instruction,
     },
     gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError},
+    logging,
 };
 
 /// A software breakpoint.
@@ -206,9 +207,16 @@ impl gdbstub::target::ext::breakpoints::SwBreakpoint for V5Target {
         kind: ArmBreakpointKind,
     ) -> TargetResult<bool, Self> {
         let is_arm = matches!(kind, ArmBreakpointKind::Arm32);
-        let did_add = unsafe { self.register_sw_breakpoint(addr, !is_arm, false).is_ok() };
-
-        Ok(did_add)
+        match unsafe { self.register_sw_breakpoint(addr, !is_arm, false) } {
+            Ok(()) => {
+                logging::info!("Added software breakpoint at {addr:#010x} ({kind:?})");
+                Ok(true)
+            }
+            Err(err) => {
+                logging::warn!("Can't add software breakpoint at {addr:#010x}: {err}");
+                Ok(false)
+            }
+        }
     }
 
     fn remove_sw_breakpoint(
@@ -217,6 +225,11 @@ impl gdbstub::target::ext::breakpoints::SwBreakpoint for V5Target {
         _kind: ArmBreakpointKind,
     ) -> TargetResult<bool, Self> {
         let changed = self.remove_sw_breakpoint(addr, false);
+        if changed {
+            logging::info!("Removed software breakpoint at {addr:#010x}");
+        } else {
+            logging::debug!("No software breakpoint to remove at {addr:#010x}");
+        }
         Ok(changed)
     }
 }
