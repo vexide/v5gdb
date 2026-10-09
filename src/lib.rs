@@ -13,6 +13,7 @@ use crate::exceptions::DebugEventContext;
 
 pub mod cpu;
 pub mod exceptions;
+pub mod logging;
 mod sys;
 pub mod transport;
 
@@ -132,6 +133,7 @@ pub fn install(debugger: impl Debugger + 'static) {
 
 /// Set the current debugger, by reference.
 pub fn install_by_ref(debugger: &'static dyn Debugger) {
+    logging::debug!("Installing debugger");
     assert!(!DEBUGGER.is_completed(), "A debugger is already installed.");
     DEBUGGER.call_once(|| debugger);
 

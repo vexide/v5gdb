@@ -5,7 +5,7 @@ use gdbstub::{
     }},
 };
 
-use crate::{gdb_target::{MonitorStatus, V5Target}, sys::{DebuggerSystem, System}};
+use crate::{gdb_target::{MonitorStatus, V5Target}, logging, sys::{DebuggerSystem, System}};
 
 impl SingleThreadResume for V5Target {
     fn resume(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
@@ -20,7 +20,7 @@ impl SingleThreadResume for V5Target {
 
 impl MultiThreadResume for V5Target {
     fn clear_resume_actions(&mut self) -> Result<(), Self::Error> {
-        log::info!("Setup resume");
+        logging::info!("Setup resume");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
@@ -30,13 +30,13 @@ impl MultiThreadResume for V5Target {
         _tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
-        log::debug!("Resume action - continue");
+        logging::debug!("Resume action - continue");
         // All threads use the "continue" resume action by default.
         Ok(())
     }
 
     fn resume(&mut self) -> Result<(), Self::Error> {
-        log::info!("Commit resume");
+        logging::info!("Commit resume");
         self.monitor_status = MonitorStatus::ResumingProgram;
         Ok(())
     }
@@ -60,7 +60,7 @@ impl MultiThreadSingleStep for V5Target {
         tid: Tid,
         _signal: Option<gdbstub::common::Signal>,
     ) -> Result<(), Self::Error> {
-        log::info!(
+        logging::info!(
             "Resume action STEP for tid {tid:?} (current = {})",
             System::current_thread()
         );

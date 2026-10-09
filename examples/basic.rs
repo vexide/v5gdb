@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use v5gdb::{debugger::V5Debugger, transport::StdioTransport};
+use v5gdb::{debugger::V5Debugger, logging::LevelFilter, transport::StdioTransport};
 use vexide::prelude::*;
 
 #[inline(never)]
@@ -22,12 +22,11 @@ fn fib(n: u64) -> u64 {
 #[vexide::main]
 async fn main(_peripherals: Peripherals) {
     let log_level = if option_env!("DEBUG").is_some() {
-        log::Level::max()
+        LevelFilter::max()
     } else {
-        log::Level::Warn
+        LevelFilter::Warn
     };
-    colored::control::set_override(true);
-    clang_log::init(log_level, "v5gdb(basic)");
+    v5gdb::logging::set_max_level(log_level);
 
     v5gdb::install(V5Debugger::new(StdioTransport::new()));
     v5gdb::breakpoint!();

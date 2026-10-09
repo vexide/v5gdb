@@ -137,4 +137,13 @@ inline void install(BaseTransport const& transport) {
 inline void breakpoint() {
     __asm__ volatile("bkpt");
 }
+
+using LogFilter = impl::LogFilter;
+/// Sets the most verbose level of debugger log messages that will be printed.
+///
+/// Defaults to only showing logs at least as severe as warnings. This can also be changed at
+/// runtime with the `monitor log` command.
+inline void set_max_log_level(LogFilter filter) {
+    impl::v5gdb_set_max_log_level(filter);
+}
 } // namespace v5gdb

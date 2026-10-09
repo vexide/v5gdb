@@ -7,7 +7,7 @@
 //!
 //! GDB should report that the program received a SIGINT and enter the debug monitor.
 
-use v5gdb::{debugger::V5Debugger, transport::StdioTransport};
+use v5gdb::{debugger::V5Debugger, logging::LevelFilter, transport::StdioTransport};
 use vex_sdk::vexTasksRun;
 use vexide::prelude::*;
 
@@ -23,12 +23,11 @@ fn busy_spin() -> ! {
 #[vexide::main]
 async fn main(_peripherals: Peripherals) {
     let log_level = if option_env!("DEBUG").is_some() {
-        log::Level::max()
+        LevelFilter::max()
     } else {
-        log::Level::Warn
+        LevelFilter::Warn
     };
-    colored::control::set_override(true);
-    clang_log::init(log_level, "v5gdb(spin)");
+    v5gdb::logging::set_max_level(log_level);
 
     v5gdb::install(V5Debugger::new(StdioTransport::new()));
 

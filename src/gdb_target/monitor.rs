@@ -1,11 +1,11 @@
 use core::{iter, str::FromStr};
 
 use gdbstub::target::ext::monitor_cmd::{ConsoleOutput, MonitorCmd};
-use log::LevelFilter;
 use vex_sdk::*;
 
 use crate::{
     gdb_target::V5Target,
+    logging::{self, LevelFilter},
     sdk::{competition, stop_all_motors},
     sys::{DebuggerSystem, System},
 };
@@ -186,7 +186,7 @@ impl MonitorCmd for V5Target {
                 if let Some(level) = args.next()
                     && let Ok(level) = LevelFilter::from_str(level)
                 {
-                    log::set_max_level(level);
+                    logging::set_max_level(level);
                 } else {
                     gdbstub::outputln!(out, "Expected off/trace/debug/info/warn/error.")
                 }

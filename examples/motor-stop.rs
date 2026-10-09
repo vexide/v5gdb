@@ -45,6 +45,7 @@ use std::time::Duration;
 
 use v5gdb::{
     debugger::{DebuggerConfig, V5Debugger},
+    logging::LevelFilter,
     transport::StdioTransport,
 };
 use vex_sdk::{V5_MAX_DEVICE_PORTS, vexDeviceGetByIndex, vexDeviceMotorVoltageSet};
@@ -76,8 +77,7 @@ fn motor_stop_loop(iteration: u32) -> u32 {
 
 #[vexide::main(banner(enabled = false))]
 async fn main(_peripherals: Peripherals) {
-    colored::control::set_override(true);
-    clang_log::init(log::Level::max(), "v5gdb(motor_stop)");
+    v5gdb::logging::set_max_level(LevelFilter::max());
 
     println!("*** v5gdb motor-stop-on-breakpoint example ***");
     println!("Motors will spin at +6 V, then stop automatically at the breakpoint.");

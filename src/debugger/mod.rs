@@ -20,6 +20,7 @@ use crate::{
     Debugger,
     exceptions::DebugEventContext,
     gdb_target::{MonitorStatus, StopReason, V5Target},
+    logging,
     sdk::stop_all_motors,
     sys::{DebuggerSystem, System},
     transport::{Transport, TransportError},
@@ -121,7 +122,7 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         // V5Target are the source of truth so `self.config` is never read again.
         session.target.stop_motors_on_break = self.config.stop_motors_on_break;
 
-        log::debug!("Debugger initialized (config={:?})", self.config);
+        logging::debug!("Debugger initialized (config={:?})", self.config);
     }
 
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool {
@@ -130,15 +131,15 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         let stop_reason = session.target.enter_breakpoint(ctx);
 
         if session.target.stop_motors_on_break {
-            log::debug!("Auto motor-stop triggered by breakpoint");
+            logging::debug!("Auto motor-stop triggered by breakpoint");
             stop_all_motors();
         }
 
         let action = session.handle_stop(stop_reason);
         if action == StopAction::EnterMonitor {
-            log::debug!("Starting debug console");
+            logging::debug!("Starting debug console");
             session.run_debug_console();
-            log::debug!("Debug console has exited");
+            logging::debug!("Debug console has exited");
         }
 
         session.target.leave_breakpoint(ctx)
@@ -284,7 +285,7 @@ where
 
         let exit_func = vexSystemExitRequest as *const () as u32;
         let is_thumb = (exit_func & 1) != 0;
-        log::debug!("Register pre-exit handler (thumb={is_thumb})");
+        logging::debug!("Register pre-exit handler (thumb={is_thumb})");
 
         let internal_breaks = [(InternalBreakpoint::SystemExitRequest, exit_func & !1)];
 
@@ -337,7 +338,7 @@ where
             }
             GdbStubStateMachine::Running(gdb) => {
                 let reported_reason = target.gdb_stop_reason();
-                log::info!("Debugger Stop reason: {reported_reason:?}");
+                logging::info!("Debugger Stop reason: {reported_reason:?}");
 
                 // Once we tell GDB we've exited we should exit the monitor because the session will
                 // end.
@@ -348,7 +349,7 @@ where
                 Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
-                log::warn!("Got Ctrl+C");
+                logging::warn!("Got Ctrl+C");
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }

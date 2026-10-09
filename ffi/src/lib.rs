@@ -11,10 +11,10 @@ use gdbstub::conn::{Connection, ConnectionExt};
 use spin::Once;
 use v5gdb::{
     debugger::V5Debugger,
+    logging::LevelFilter,
     transport::{StdioTransport, Transport, TransportError},
 };
 
-mod log;
 mod panic;
 
 #[derive(Debug, Clone, Copy)]
@@ -137,7 +137,6 @@ unsafe fn wrap_err(maybe_error: *const c_char) -> TransportError {
 /// Install the debugger, communicating with GDB over the V5's USB serial port.
 #[unsafe(export_name = "v5gdb_install_stdio")]
 pub extern "C" fn install_stdio() {
-    self::log::init();
     static DEBUGGER: Once<V5Debugger<StdioTransport>> = Once::new();
     DEBUGGER.call_once(|| V5Debugger::new(StdioTransport::new()));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
@@ -152,7 +151,6 @@ pub extern "C" fn install_stdio() {
 /// context.
 #[unsafe(export_name = "v5gdb_install_custom")]
 pub unsafe extern "C" fn install_custom(transport: TransportImpl) {
-    self::log::init();
     static DEBUGGER: Once<V5Debugger<TransportImpl>> = Once::new();
     DEBUGGER.call_once(|| V5Debugger::new(transport));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
@@ -162,6 +160,44 @@ pub unsafe extern "C" fn install_custom(transport: TransportImpl) {
 #[unsafe(export_name = "v5gdb_breakpoint")]
 pub extern "C" fn breakpoint() {
     v5gdb::breakpoint!();
+}
+
+#[repr(C)]
+pub enum LogFilter {
+    /// Disables all log messages.
+    Off,
+    /// Disables log messages less severe than `Error`.
+    Error,
+    /// Disables log messages less severe than `Warn`.
+    Warn,
+    /// Disables log messages less severe than `Info`.
+    Info,
+    /// Disables log messages less severe than `Debug`.
+    Debug,
+    /// Enables all log messages.
+    Trace,
+}
+
+impl From<LogFilter> for LevelFilter {
+    fn from(value: LogFilter) -> Self {
+        match value {
+            LogFilter::Off => LevelFilter::Off,
+            LogFilter::Error => LevelFilter::Error,
+            LogFilter::Warn => LevelFilter::Warn,
+            LogFilter::Info => LevelFilter::Info,
+            LogFilter::Debug => LevelFilter::Debug,
+            LogFilter::Trace => LevelFilter::Trace,
+        }
+    }
+}
+
+/// Sets the most verbose level of debugger log messages that will be printed.
+///
+/// Defaults to [`LevelFilter::Warn`]. This can also be changed at runtime with the `monitor log`
+/// command.
+#[unsafe(export_name = "v5gdb_set_max_log_level")]
+pub extern "C" fn set_max_log_level(level: LogFilter) {
+    v5gdb::logging::set_max_level(level.into());
 }
 
 // In the VEX partner SDK, vexTasksRun is renamed to vexBackgroundProcessing.

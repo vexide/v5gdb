@@ -2,7 +2,7 @@ use core::{fmt::Write, panic::PanicInfo};
 
 #[panic_handler]
 fn panic_handler(panic: &PanicInfo) -> ! {
-    log::error!("v5gdb {panic}");
+    v5gdb::logging::log(v5gdb::logging::Level::Error, format_args!("{panic}"));
     let mut report = ErrorReport::begin();
     _ = writeln!(report, "v5gdb {panic}");
 

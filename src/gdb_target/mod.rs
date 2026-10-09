@@ -31,7 +31,7 @@ use crate::{
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
-    }, sys::{DebuggerSystem, System},
+    }, logging, sys::{DebuggerSystem, System},
 };
 
 pub mod arch;
@@ -165,7 +165,7 @@ impl V5Target {
             aarch32_cpu::interrupt::enable();
         }
 
-        log::debug!("Entered debug event handler");
+        logging::debug!("Entered debug event handler");
 
         let mode = ctx.cpsr.mode();
         assert!(
@@ -176,8 +176,8 @@ impl V5Target {
 
         static BKPT_LOG: Once = Once::new();
         BKPT_LOG.call_once(|| {
-            log::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
-            log::error!("Your program has been paused. Please connect a debugger.")
+            logging::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
+            logging::error!("Your program has been paused. Please connect a debugger.")
         });
 
         self.original_hw_lock_state = self.hw_manager.locked();
@@ -201,7 +201,7 @@ impl V5Target {
         // Write back any modifications back so the debug event handler can apply them.
         *ctx = self.exception_ctx.clone();
 
-        log::debug!("Exiting debug event handler");
+        logging::debug!("Exiting debug event handler");
 
         let resuming_to_full = self.single_step_request.is_none() && !self.interrupt_pending;
         // Single steps run with the scheduler off so that we are guaranteed to step the current
@@ -231,7 +231,7 @@ impl V5Target {
             return Ok(());
         }
 
-        log::debug!("Preparing single step operation");
+        logging::debug!("Preparing single step operation");
 
         let kind = if self.exception_ctx.cpsr.thumb() {
             ArmBreakpointKind::Thumb16
@@ -446,19 +446,19 @@ impl Target for V5Target {
 
 impl SingleThreadBase for V5Target {
     fn read_registers(&mut self, regs: &mut DebugEventContext) -> TargetResult<(), Self> {
-        log::info!("Reading all registers");
+        logging::info!("Reading all registers");
         *regs = self.exception_ctx.clone();
         Ok(())
     }
 
     fn write_registers(&mut self, regs: &DebugEventContext) -> TargetResult<(), Self> {
-        log::info!("Writing all registers");
+        logging::info!("Writing all registers");
         self.exception_ctx = regs.clone();
         Ok(())
     }
 
     fn read_addrs(&mut self, start_addr: u32, data: &mut [u8]) -> TargetResult<usize, Self> {
-        log::info!("Read addr {start_addr} for {} bytes", data.len(),);
+        logging::info!("Read addr {start_addr} for {} bytes", data.len(),);
 
         let bytes_read = memory::read_memory(start_addr, data);
         if bytes_read == 0 {
@@ -469,7 +469,7 @@ impl SingleThreadBase for V5Target {
     }
 
     fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
-        log::info!("Write addr {start_addr} for {} bytes", data.len(),);
+        logging::info!("Write addr {start_addr} for {} bytes", data.len(),);
 
         if memory::write_memory(start_addr, data) {
             Ok(())
