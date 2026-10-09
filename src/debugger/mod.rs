@@ -106,7 +106,7 @@ impl<S: Transport> V5Debugger<S> {
     /// Returns the debugger's internal state.
     #[must_use]
     pub fn session<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
-        self.session.lock()
+        self.session.try_lock().expect("should not recursively enter debug monitor")
     }
 }
 

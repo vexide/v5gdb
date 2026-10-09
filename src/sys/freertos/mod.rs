@@ -262,7 +262,7 @@ fn scan_tasks() -> impl Iterator<Item = TaskStatus_t> {
     static TASK_ARRAY: Mutex<[MaybeUninit<TaskStatus_t>; 128]> =
         Mutex::new([MaybeUninit::uninit(); _]);
 
-    let mut task_array = TASK_ARRAY.lock();
+    let mut task_array = TASK_ARRAY.try_lock().unwrap();
 
     // SAFETY: The task_array pointer is valid and we pass in the correct length for
     // bounds checking.
