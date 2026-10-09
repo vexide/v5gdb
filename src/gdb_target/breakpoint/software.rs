@@ -5,7 +5,7 @@ use crate::{
         cache::{self, CacheTarget},
         instruction::Instruction,
     },
-    gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError},
+    gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError, memory::test_access},
     logging,
 };
 
@@ -113,10 +113,6 @@ impl V5Target {
         thumb: bool,
         internal: bool,
     ) -> Result<(), BreakpointError> {
-        if addr < 0x0300_0000 {
-            return Err(BreakpointError::CannotWrite);
-        }
-
         let mut next_inactive = None;
 
         for bkpt_slot in self.breaks.iter_mut() {
@@ -147,6 +143,12 @@ impl V5Target {
         };
 
         let mut bkpt = unsafe { SwBreakpoint::new(addr, thumb, internal) };
+
+        let size = bkpt.instr_backup.size();
+
+        if test_access(addr..(addr + size as u32), true) != size {
+            return Err(BreakpointError::CannotWrite);
+        }
 
         if !self.breaks_paused {
             bkpt.set_enabled(true);

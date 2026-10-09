@@ -5,7 +5,7 @@ use core::arch::asm;
 use aarch32_cpu::{
     asm::{dsb, isb},
     mmu::{CachePolicy, MemoryRegionAttributes},
-    register::{SysReg, SysRegRead, SysRegWrite},
+    register::{Par, SysReg, SysRegRead, SysRegWrite},
 };
 use arbitrary_int::*;
 use bitbybit::{bitenum, bitfield};
@@ -362,4 +362,16 @@ pub fn with_manager_domain_access<T>(inner: impl FnOnce() -> T) -> T {
     isb(); // Wait for domain permissions change to finish.
 
     res
+}
+
+#[bitfield(u32, debug)]
+pub struct PhysicalAccessRegister {
+    #[bit(0, r)]
+    fault: bool,
+}
+
+impl From<Par> for PhysicalAccessRegister {
+    fn from(par: Par) -> Self {
+        Self::new_with_raw_value(par.0)
+    }
 }
