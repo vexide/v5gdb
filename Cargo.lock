@@ -893,6 +893,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cobs",
+ "thiserror",
  "tokio",
  "vex-v5-serial",
  "which",
