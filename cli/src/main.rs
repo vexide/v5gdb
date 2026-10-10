@@ -17,11 +17,17 @@ use crate::serial::{ErrorHandler, SerialStreamError, V5SerialStream};
 
 mod serial;
 
+/// Use GDB to debug a VEX V5 robot running the v5gdb debug server.
+///
+/// This command can only connect to robots that are currently stopped at a breakpoint.
 #[derive(Debug, clap::Parser)]
 struct Args {
+    /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
     #[clap(long)]
     tcp: Option<String>,
+    /// List of ELF files to debug with GDB (has no effect in TCP mode).
     elf_files_to_debug: Vec<String>,
+    /// Prints verbose serial I/O logs and errors to stdout.
     #[clap(long)]
     debug_io: bool,
 }
@@ -66,7 +72,10 @@ async fn main() -> anyhow::Result<()> {
         cmd.arg(format!("--eval-command=file {main_elf_file}"));
     }
     for elf_file in elves {
-        cmd.arg(format!("--eval-command=add-symbol-file {elf_file}"));
+        // `with confirm off` skips the "add symbol table from file" prompt.
+        cmd.arg(format!(
+            "--eval-command=with confirm off -- add-symbol-file {elf_file}"
+        ));
     }
 
     cmd.arg("--eval-command=target remote :35537");
