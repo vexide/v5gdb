@@ -193,7 +193,7 @@ impl From<LogFilter> for LevelFilter {
 
 /// Sets the most verbose level of debugger log messages that will be printed.
 ///
-/// Defaults to [`LevelFilter::Warn`]. This can also be changed at runtime with the `monitor log`
+/// Defaults to [`LogFilter::Warn`]. This can also be changed at runtime with the `monitor log`
 /// command.
 #[unsafe(export_name = "v5gdb_set_max_log_level")]
 pub extern "C" fn set_max_log_level(level: LogFilter) {
