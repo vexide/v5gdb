@@ -8,13 +8,15 @@ Building this crate will create a compilation artifact named "libv5gdb.a" which 
 a C++ project in the normal way (whatever that means for you). The headers for this library are
 located in the `include` directory in this folder.
 
+Run this from the `firmware` directory:
+
 ```sh
-cargo build -p ffi --target=armv7a-vex-v5 -Zbuild-std=core -Fv5gdb/pros
+cargo build -p v5gdb-ffi --target=armv7a-vex-v5 -Zbuild-std=core -Fv5gdb/pros
 ls ./target/armv7a-vex-v5/debug/libv5gdb.a
 ```
 
 Building with `--release`/`-r` will reduce the file size. All release builds have debug info
-enabled (see `profile.release` in the repository's Cargo.toml).
+enabled (see `profile.release` in `firmware/Cargo.toml`).
 
 ### Command-line arguments
 
@@ -27,8 +29,8 @@ of the Rust configuration flags which you might find useful.
 * `--target armv7a-none-eabi` should be passed to perform a build for VEX V5 with the soft-float
   ABI.
 
-Here are some flags that configure v5gdb's optional features. These are all defined in `Cargo.toml`
-in the root of the repository.
+Here are some flags that configure v5gdb's optional features. These are all defined in
+`firmware/Cargo.toml`.
 
 * `-F v5gdb/freertos` should be passed if you want to enable v5gdb's FreeRTOS integration.
 * `-F v5gdb/pros` should be passed if you want to enable v5gdb's FreeRTOS integration with
@@ -38,7 +40,8 @@ in the root of the repository.
 
 If you are using a common C++ framework (currently only PROS is supported), you can use the
 `cargo xtask build <framework>` subcommand which will automatically set the correct command line
-flags and do other useful things. The code for this subcommand lives in the `xtask` folder.
+flags and do other useful things. Run it from the repository root. The code for this subcommand lives in the
+`xtask` folder at the repository root.
 
 * `cargo xtask build pros [--release]`:
 

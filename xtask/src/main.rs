@@ -50,12 +50,13 @@ fn cargo() -> OsString {
     env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
+/// The `firmware` workspace containing v5gdb and other on-device code.
+fn firmware_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../firmware"))
+}
+
 fn test() {
-    let mut locate_cmd = Command::new(cargo());
-    locate_cmd.args(["locate-project", "--message-format=plain", "--workspace"]);
-    let out = locate_cmd.output().unwrap();
-    let cargo_toml = Path::new(std::str::from_utf8(&out.stdout).unwrap().trim());
-    let tests_dir = cargo_toml.join("../tests").canonicalize().unwrap();
+    let tests_dir = firmware_dir().join("tests").canonicalize().unwrap();
 
     for file in tests_dir.read_dir().unwrap() {
         let file = file.unwrap();
@@ -74,6 +75,7 @@ fn test() {
         progress.enable_steady_tick(Duration::from_millis(250));
 
         let mut test_command = Command::new(cargo());
+        test_command.current_dir(firmware_dir());
         test_command.args(["v5", "run", "-p=v5gdb", "--test"]);
         test_command.arg(test_name);
         test_command.stdout(Stdio::piped());
@@ -110,7 +112,7 @@ fn test() {
                     _ => {}
                 }
             } else {
-                progress.println(format!("{line}"));
+                progress.println(&line);
             }
         }
 
@@ -167,6 +169,7 @@ fn build(target: FfiTarget, opts: Vec<String>) {
     };
 
     let mut cargo = Command::new(cargo());
+    cargo.current_dir(firmware_dir());
     cargo.args([
         "build",
         "-p=v5gdb-ffi",
@@ -182,10 +185,11 @@ fn build(target: FfiTarget, opts: Vec<String>) {
     // Look for staticlib build outputs
     let mut library_path = None;
     for message in Message::parse_stream(reader) {
-        if let Message::CompilerArtifact(artifact) = message.unwrap() {
-            if artifact.target.is_staticlib() && artifact.target.name == "v5gdb" {
-                library_path = Some(artifact.filenames[0].clone());
-            }
+        if let Message::CompilerArtifact(artifact) = message.unwrap()
+            && artifact.target.is_staticlib()
+            && artifact.target.name == "v5gdb"
+        {
+            library_path = Some(artifact.filenames[0].clone());
         }
     }
 
@@ -203,8 +207,8 @@ fn build(target: FfiTarget, opts: Vec<String>) {
 }
 
 fn make_pros_template(library: &Path) {
-    let cargo_manifest = fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.toml"))
-        .expect("v5gdb Cargo.toml exists");
+    let cargo_manifest =
+        fs::read(firmware_dir().join("Cargo.toml")).expect("v5gdb Cargo.toml exists");
     let cargo_manifest: Value =
         toml::from_slice(&cargo_manifest).expect("v5gdb Cargo.toml is valid");
 
@@ -220,7 +224,7 @@ fn make_pros_template(library: &Path) {
     fs::create_dir_all(&template_dir).unwrap();
 
     // Copy includes and config files to template
-    let ffi_dist_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../ffi/dist");
+    let ffi_dist_dir = firmware_dir().join("ffi/dist");
     fs_extra::dir::copy(
         &ffi_dist_dir,
         &template_dir,
@@ -244,7 +248,7 @@ fn make_pros_template(library: &Path) {
     let files = contents
         .files
         .iter()
-        .map(|s| Path::new(s))
+        .map(Path::new)
         .map(|p| p.strip_prefix(&template_dir).unwrap().to_path_buf())
         .collect::<Vec<_>>();
 
@@ -267,7 +271,7 @@ fn make_pros_template(library: &Path) {
     }
 
     let relative_zip_file = zip_path
-        .strip_prefix(&env::current_dir().unwrap())
+        .strip_prefix(env::current_dir().unwrap())
         .unwrap_or(&zip_path);
 
     println!("Built template: {}\n", zip_path.display());

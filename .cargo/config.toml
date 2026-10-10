@@ -1,14 +1,2 @@
 [alias]
 xtask = "run -p xtask --"
-
-[target.'cfg(target_os = "vexos")']
-rustflags = [
-    "-Clink-arg=-Tvexide.ld",
-    "-Ctarget-feature=+thumb-mode",
-    "-Cforce-unwind-tables=no",
-    "-Cforce-frame-pointers=yes",
-]
-
-[unstable]
-build-std = ["std", "panic_abort"]
-build-std-features = ["compiler-builtins-mem"]

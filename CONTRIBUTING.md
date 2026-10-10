@@ -12,39 +12,43 @@ Since Rust's support for the VEX V5 platform is unstable, we only support some v
 rustup toolchain install
 ```
 
-After doing so, you can build the library with `cargo build --target=armv7a-vex-v5`.
+The repository has two Cargo workspaces:
+
+- `firmware/` contains everything that runs on-device, including the debugger itself and FFI bindings.
+- Packages in the repository root contain code that runs on your computer (e.g. `xtask`, `cli`).
+
+After installing the toolchain, you can build the debugger library by running `cargo build` in the `firmware` directory.
 
 ### Examples
 
-The `examples` folder contains some example code (based on the vexide framework) that you can try debugging. To upload one of the examples to a V5 robot, first install [cargo-v5](https://github.com/vexide/cargo-v5#readme), then connect the robot to your computer with a USB cable, and finally run this command:
+The `firmware/examples` folder contains some example code (based on the vexide framework) that you can try debugging. To upload one of the examples to a V5 robot, first install [cargo-v5](https://github.com/vexide/cargo-v5#readme), then connect the robot to your computer with a USB cable, and finally run this command from the `firmware` directory:
 
 ```bash
 cargo v5 upload --example basic
 ```
 
-> [!WARNING]
->
-> At the time of writing, the latest release of cargo-v5 has some issues with buffering serial data it receives over USB. For GDB sessions to work properly, you should install it from the `fix/stdin-buffering` branch.
->
-> Here is the command you should run to install cargo-v5:
->
-> ```bash
-> cargo install --git https://github.com/vexide/cargo-v5 --branch fix/stdin-buffering
-> ```
-
 ### Connecting with GDB
 
-When an example program halts due to a breakpoint, start a GDB session on your computer and use cargo-v5 to stream serial output from the robot over its USB cable.
+Use the `v5gdb` wrapper to connect to GDB (the code for it is in `cli/`). You can install it with:
 
-You should use the `file` command to tell GDB which example program you're debugging.
+```bash
+cargo install --path cli
+```
+
+Then use it like this to connect to a robot stopped at a breakpoint:
 
 ```
-$ gdb
+$ v5gdb ./firmware/target/armv7a-vex-v5/debug/examples/basic
 GNU gdb (GDB) 16.3
-(gdb) file ./target/armv7a-vex-v5/debug/examples/basic
-Reading symbols from ./target/armv7a-vex-v5/debug/examples/basic...
-(gdb) target remote | cargo v5 terminal
-Remote debugging using | cargo v5 terminal
+(gdb)
+```
+
+Alternatively, you can run the command-line tool as a server that a normal GDB instance can connect to:
+
+```
+$ v5gdb --tcp 127.0.0.1:35537
+(In a different terminal window:)
+$ gdb -ex "target remote :35537" bin/monolith.elf
 ```
 
 Once you've established a connection, here are some GDB commands you might want to try out:
@@ -62,9 +66,12 @@ Once you've established a connection, here are some GDB commands you might want 
 If you want to call functions or access values in your program from GDB, you can do so like this:
 
 ```
-call vex_sdk_jumptable::display::vexDisplayForegroundColor(0xFF00FF)
 call basic::fib(40)
 print $r0
+(vexide:)
+call vex_sdk_jumptable::display::vexDisplayForegroundColor(0xFF00FF)
+(PROS:)
+call (void)vexDisplayForegroundColor(0xFF00FF)
 ```
 
 ## Troubleshooting
@@ -73,15 +80,15 @@ If you are getting weird errors when you try connecting with GDB (or your robot 
 
 If you suspect there is an issue with the serial connection and you're not sure what GDB is really doing, run the command `set debug remote 1` which will start printing out all the communications between GDB and v5gdb in real-time.
 
-If you want a log of everything v5gdb is sending to GDB (e.g. to see panic messages or aborts or debugging `println!`s), you can connect like this:
+If you want an extremely verbose log of everything v5gdb is sending to GDB, you can connect like this:
 
 ```
-target remote | cargo v5 t | tee out.log
+v5gdb --debug-io bin/monolith.elf
 ```
 
 ## Integration tests
 
-You can run integration tests by connecting to a brain and running `cargo xtask test`. It will upload each test in the `tests` directory and run them. The first time you run it, it will take a while to compile the code in the `xtask` directory.
+You can run integration tests by connecting to a brain and running `cargo xtask test` from the repository root. It will upload each test in the `firmware/tests` directory and run them. The first time you run it, it will take a while to compile the code in the `xtask` directory.
 
 ## Licensing
 

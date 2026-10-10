@@ -15,9 +15,20 @@ jobs:
 
             - name: Setup | Build cache
               uses: Swatinem/rust-cache@v2
+              with:
+                workspaces: |
+                  firmware
+                  .
+
+            - name: Setup | Install libudev
+              run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
             - name: Check (VEXos)
-              run: cargo check --all-targets --target=armv7a-vex-v5
+              run: cargo check --all-targets
+              working-directory: firmware
+
+            - name: Check (host tools)
+              run: cargo check --all-targets
     lint:
         name: Lint
         runs-on: ubuntu-latest
@@ -33,9 +44,22 @@ jobs:
 
             - name: Setup | Build cache
               uses: Swatinem/rust-cache@v2
+              with:
+                workspaces: |
+                  firmware
+                  .
 
-            - name: Clippy
-              run: cargo clippy --all-targets --target=armv7a-vex-v5
+            - name: Setup | Install libudev
+              run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+            - name: Clippy (VEXos)
+              run: cargo clippy --all-targets
+              working-directory: firmware
+              env:
+                RUSTFLAGS: "-Dwarnings"
+
+            - name: Clippy (host tools)
+              run: cargo clippy --all-targets
               env:
                 RUSTFLAGS: "-Dwarnings"
     fmt:
@@ -52,4 +76,6 @@ jobs:
               run: rustup component add rustfmt
 
             - name: Check formatting
-              run: cargo fmt --all --check
+              run: |
+                cargo fmt --all --check
+                cd firmware && cargo fmt --all --check

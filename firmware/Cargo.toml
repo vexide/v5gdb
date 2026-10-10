@@ -1,0 +1,98 @@
+[package]
+name = "v5gdb"
+version = "0.1.0-alpha.3"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "GDB-compatible debugger backend for the VEX V5 platform"
+authors = ["Lewis McClelland <lewis@lewismcclelland.me>", "Tropical"]
+categories = ["development-tools::debugging", "embedded", "hardware-support"]
+keywords = ["vex-v5", "gdb", "debugging", "vexide"]
+repository = "https://github.com/vexide/v5gdb"
+readme = "../README.md"
+homepage = "https://internals.vexide.dev/technical/debugger"
+rust-version = "1.94"
+
+# This is read by xtask to populate PROS template bundles.
+[package.metadata.pros]
+supported_kernels = "^4.2.2"
+target = "v5"
+metadata = {}
+
+
+[features]
+default = ["alloc"]
+
+# Enable Rust allocator integration.
+alloc = []
+
+# Enable FreeRTOS integration (enables thread-safety under FreeRTOS as well as the ability to
+# detect and manage RTOS tasks from the debugger).
+freertos = []
+
+# Enable PROS FreeRTOS integration (some FreeRTOS APIs have different names under the PROS port).
+pros = ["freertos"]
+
+
+[profile.release]
+opt-level = "z"
+lto = false
+debug = true
+
+[profile.dev-opt]
+inherits = "dev"
+
+[profile.dev-opt.package."*"]
+opt-level = "z"
+
+# These fields configure default behavior for uploading examples with `cargo v5`.
+[package.metadata.v5]
+upload-strategy = "differential"
+slot = 1
+icon = "cool-x"
+compress = true
+
+[workspace]
+members = ["ffi"]
+
+[workspace.dependencies]
+gdbstub = { version = "0.7.10", default-features = false, features = ["core_error"]}
+spin = { version = "0.12.2", default-features = false, features = [
+    "mutex",
+    "once",
+    "spin_mutex",
+] }
+vex-sdk = "0.29.0-rc.1"
+owo-colors = "4.3.0"
+
+[dependencies]
+arbitrary-int = "2.1.1"
+bitbybit = "2.0.0"
+gdbstub.workspace = true
+spin.workspace = true
+log = "0.4.29"
+vex-sdk.workspace = true
+bytemuck = { version = "1.25.0", features = ["derive", "must_cast"] }
+owo-colors.workspace = true
+derive_more = { version = "2.1.1", features = ["from"], default-features = false }
+static_cell = { version = "2.1.0", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
+
+[target."cfg(target_arch = \"arm\")".dependencies]
+zynq7000 = "0.6.0"
+critical-section = "1.2.0"
+derive-mmio = "0.8.0"
+cobs = { version = "0.5.1", default-features = false }
+aarch32-cpu = { version = "0.4.0", features = ["critical-section-single-core"] }
+
+[dev-dependencies]
+anyhow = "1.0.102"
+
+[dev-dependencies.vexide]
+version = "0.9.0-alpha.1"
+features = ["full", "default-sdk"]
+
+[[test]]
+name = "hardware"
+harness = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

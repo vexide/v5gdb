@@ -1,4 +1,6 @@
 {
-    "rust-analyzer.cargo.target": "armv7a-vex-v5",
-    "rust-analyzer.cargo.features": ["freertos"]
+    "rust-analyzer.linkedProjects": ["Cargo.toml", "firmware/Cargo.toml"],
+    // Cargo cfgs is used instead of features since some crates don't have the freertos feature and
+    // we don't want that to cause an error.
+    "rust-analyzer.cargo.cfgs": ["debug_assertions", "miri", "feature=freertos"]
 }
