@@ -11,6 +11,8 @@
 
 #![allow(non_snake_case)]
 
+use core::cmp;
+
 use cobs::CobsEncoder;
 
 use crate::sdk::serial::{self, Channel};
@@ -52,14 +54,17 @@ pub enum ChannelId {
 
 /// The size of the buffer used to build a single outgoing packet.
 ///
-/// This is deliberately much smaller than [`serial::OUT_BUF_SIZE`]: writes are muxed from whatever
-/// task called `vexSerial*`, and some of those have very little stack to spare. PROS's
-/// `Serial Daemon` task, for example, gets only 2 KiB in total, so a large buffer here overflows it
-/// on the first flush of stdout.
-///
-/// The buffer has to live on the stack rather than in a static because [`write_all`] is reentrant:
-/// a debug exception can interrupt a task partway through a write and send a packet of its own.
+/// This is intentionally a lot smaller than the system's out buffer size to support tasks with very
+/// small stack sizes (including the PROS serial daemon which only has 2 KiB of stack). We also
+/// can't put this in a static because that would be corrupted if we paused during a [`write_all`].
 const PACKET_BUF_SIZE: usize = 128;
+
+/// The largest number of payload bytes that fit in one packet.
+///
+/// There are three bytes of overhead: the channel ID, COBS overhead, and finally a \0 delimiter.
+const MAX_PAYLOAD_LEN: usize = PACKET_BUF_SIZE - 3;
+#[expect(clippy::int_plus_one)]
+const _: () = assert!(cobs::max_encoding_length(1 + MAX_PAYLOAD_LEN) + 1 <= PACKET_BUF_SIZE);
 
 /// Write one or more COBS-encoded packets to serial output, each prefixed with the given channel
 /// id.
@@ -75,15 +80,14 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 
         let mut encoder = CobsEncoder::new(out_buf_without_delimiter);
 
-        encoder.push(&[channel as u8]).unwrap();
+        // Put as many bytes as possible into this packet. The chunk size has to be worked out in
+        // advance because a failed `push` still advances the encoder's state (this is probably
+        // a bug in the cobs crate).
+        let (chunk, rest) = buf.split_at(cmp::min(buf.len(), MAX_PAYLOAD_LEN));
+        buf = rest;
 
-        // Put as many bytes as possible into this packet.
-        while let Some(&byte) = buf.first() {
-            let Ok(_) = encoder.push(&[byte]) else {
-                break;
-            };
-            buf = &buf[1..];
-        }
+        encoder.push(&[channel as u8]).unwrap();
+        encoder.push(chunk).unwrap();
 
         let length = encoder.finalize();
 
