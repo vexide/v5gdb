@@ -1,7 +1,7 @@
 //! Software breakpoint management.
 
 use gdbstub::target::ext::breakpoints::{Breakpoints, HwBreakpointOps, SwBreakpointOps};
-use snafu::Snafu;
+use thiserror::Error;
 
 use super::V5Target;
 use crate::cpu::cache;
@@ -31,14 +31,18 @@ impl V5Target {
     }
 }
 
-#[derive(Debug, Snafu, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
 pub enum BreakpointError {
-    /// A software breakpoint can't be placed there because that region isn't writable.
+    /// The region is not writable.
+    #[error("software breakpoints cannot be placed in read-only memory")]
     CannotWrite,
     /// There is already a breakpoint with this address.
+    #[error("a breakpoint already exists at the requested address")]
     AlreadyExists,
     /// There are no free breakpoint slots.
+    #[error("there are no more unused breakpoint slots")]
     NoSpace,
     /// The specified breakpoint address is not aligned properly for the given instruction type.
+    #[error("the breakpoint address is not aligned properly for the given instruction type")]
     NotAlignedCorrectly,
 }

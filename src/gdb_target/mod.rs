@@ -1,7 +1,5 @@
 #![allow(clippy::missing_safety_doc)]
 
-use core::convert::Infallible;
-
 use gdbstub::{
     common::Signal,
     stub::MultiThreadStopReason,
@@ -33,6 +31,8 @@ use crate::{
             hardware::{HwBreakpointManager, Specificity},
             software::SwBreakpoint,
         },
+        error::FatalError,
+        resume::ResumeActions,
     },
     logging,
     sys::{DebuggerSystem, System},
@@ -40,6 +40,7 @@ use crate::{
 
 pub mod arch;
 pub mod breakpoint;
+pub mod error;
 pub mod memory;
 pub mod monitor;
 pub mod resume;
@@ -64,6 +65,8 @@ pub enum StopReason {
     ///
     /// This can happen if the user presses Ctrl-C in GDB to pause the program.
     Interrupt,
+    /// GDB asked us to resume the program, but we were unable to do so.
+    ResumeFailed,
     /// The program stopped for some other reason.
     ///
     /// It's probably only possible for this to be a watchpoint since most other debug events (like
@@ -125,6 +128,11 @@ pub struct V5Target {
     /// If set, breakpoints are being used to single step. Report any hardware breaks as single
     /// steps instead of normal breakpoints.
     single_step_request: Option<SingleStepRequest>,
+    /// If set, the client requests that we do not unpause the scheduler when resuming.
+    force_scheduler_suspend: bool,
+    /// Tracks whether the debugger has suspended the scheduler.
+    scheduler_suspended_by_debugger: bool,
+    resume: ResumeActions,
 
     /// If set, the next instruction executed in user code will trigger entry into the debug
     /// monitor and be reported to GDB as SIGINT.
@@ -142,6 +150,9 @@ impl V5Target {
             breaks_paused: false,
             breaks: [None; _],
             single_step_request: None,
+            force_scheduler_suspend: false,
+            scheduler_suspended_by_debugger: false,
+            resume: ResumeActions::default(),
             interrupt_pending: false,
             original_hw_lock_state: false,
             hw_manager: HwBreakpointManager::setup(devcfg),
@@ -159,8 +170,9 @@ impl V5Target {
 
         // If we're handling a single-step completion, the scheduler is already disabled from when
         // the step was initiated (previous debug session), so there's no need to do that again.
-        if self.single_step_request.is_none() {
+        if !self.scheduler_suspended_by_debugger {
             System::suspend_preemption();
+            self.scheduler_suspended_by_debugger = true;
         }
         // User IRQ handlers tend to mess with CPU state in ways that are incompatible with the
         // debugger, so keep them from running while paused.
@@ -186,6 +198,7 @@ impl V5Target {
 
         self.exception_ctx = ctx.clone();
         self.monitor_status = MonitorStatus::Active;
+        self.force_scheduler_suspend = false;
         self.classify_stop();
         self.finalize_single_step();
         self.finalize_interrupt();
@@ -221,7 +234,7 @@ impl V5Target {
         // task, not a different one. - Side note: If PROS implemented ARM's context id register, we
         // could just filter the single step breakpoint by task id and there would be no need for
         // this.
-        let should_unpause_scheduler = resuming_to_full;
+        let should_unpause_scheduler = resuming_to_full && !self.force_scheduler_suspend;
 
         // Once we leave the debug monitor, we may want to re-enable user IRQ handlers, but now is
         // an awkward time to do that since an IRQ might trigger while we are in the middle of
@@ -234,6 +247,9 @@ impl V5Target {
         self.hw_manager.set_locked(self.original_hw_lock_state);
         self.set_breakpoints_ignored(false);
 
+        if should_unpause_scheduler {
+            self.scheduler_suspended_by_debugger = false;
+        }
         should_unpause_scheduler
     }
 
@@ -413,7 +429,7 @@ impl V5Target {
             StopReason::TrackedSoftwareBreak { .. } => {
                 MultiThreadStopReason::SwBreak(System::current_thread())
             }
-            StopReason::UntrackedSoftwareBreak | StopReason::Other => {
+            StopReason::UntrackedSoftwareBreak | StopReason::ResumeFailed | StopReason::Other => {
                 MultiThreadStopReason::SignalWithThread {
                     signal: Signal::SIGTRAP,
                     tid: System::current_thread(),
@@ -431,7 +447,7 @@ impl V5Target {
 
 impl Target for V5Target {
     type Arch = ArmV7;
-    type Error = Infallible;
+    type Error = FatalError;
 
     fn base_ops(&mut self) -> BaseOps<'_, Self::Arch, Self::Error> {
         if System::MULTITHREADED {

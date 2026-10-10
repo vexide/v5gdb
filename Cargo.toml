@@ -74,14 +74,12 @@ bytemuck = { version = "1.25.0", features = ["derive", "must_cast"] }
 owo-colors.workspace = true
 derive_more = { version = "2.1.1", features = ["from"], default-features = false }
 static_cell = { version = "2.1.0", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
 
 [target."cfg(target_arch = \"arm\")".dependencies]
 zynq7000 = "0.6.0"
 critical-section = "1.2.0"
 derive-mmio = "0.8.0"
-snafu = { version = "0.9.0", default-features = false, features = [
-    "rust_1_81",
-] }
 cobs = { version = "0.5.1", default-features = false }
 aarch32-cpu = { version = "0.4.0", features = ["critical-section-single-core"] }
 
