@@ -23,7 +23,14 @@ impl MultiThreadBase for V5Target {
         &mut self,
         thread_is_active: &mut dyn FnMut(Tid),
     ) -> Result<(), Self::Error> {
-        System::all_threads(thread_is_active);
+        // gdbstub considers the first thread we report to be the current thread.
+        let current = System::current_thread();
+        thread_is_active(current);
+        System::all_threads(&mut |tid| {
+            if tid != current {
+                thread_is_active(tid);
+            }
+        });
         Ok(())
     }
 
