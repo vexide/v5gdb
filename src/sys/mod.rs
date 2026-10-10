@@ -5,7 +5,7 @@ use gdbstub::{
         ext::{host_io::HostIoErrno, monitor_cmd::ConsoleOutput},
     },
 };
-use snafu::Snafu;
+use thiserror::Error;
 
 use crate::{
     exceptions::DebugEventContext,
@@ -86,9 +86,10 @@ pub trait DebuggerSystem {
     }
 }
 
-#[derive(Debug, Snafu, Clone, Copy)]
+#[derive(Debug, Error, Clone, Copy)]
 pub enum SystemError {
     /// No such thread id
+    #[error("no such thread id")]
     NoSuchTid,
 }
 

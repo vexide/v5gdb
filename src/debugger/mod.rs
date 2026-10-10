@@ -1,6 +1,6 @@
 //! Main debugger loop and event handling logic.
 
-use core::{convert::Infallible, mem};
+use core::mem;
 
 use derive_more::From;
 use gdbstub::{
@@ -10,30 +10,28 @@ use gdbstub::{
         state_machine::GdbStubStateMachine,
     },
 };
-use snafu::Snafu;
 use spin::{Mutex, MutexGuard};
 use static_cell::ConstStaticCell;
+use thiserror::Error;
 use vex_sdk::vexSystemExitRequest;
 use zynq7000::devcfg;
 
 use crate::{
     Debugger,
     exceptions::DebugEventContext,
-    gdb_target::{MonitorStatus, StopReason, V5Target},
+    gdb_target::{MonitorStatus, StopReason, V5Target, error::FatalError},
     logging,
     sdk::stop_all_motors,
     sys::{DebuggerSystem, System},
     transport::{Transport, TransportError},
 };
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Error)]
 pub enum DebuggerError {
-    #[snafu(context(false))]
-    Io { source: TransportError },
-    #[snafu(context(false))]
-    GdbStub {
-        source: GdbStubError<Infallible, TransportError>,
-    },
+    #[error("i/o error")]
+    Io(#[from] TransportError),
+    #[error(transparent)]
+    GdbStub(#[from] GdbStubError<FatalError, TransportError>),
 }
 
 /// Initial configuration for [`V5Debugger`].
@@ -107,7 +105,9 @@ impl<S: Transport> V5Debugger<S> {
     /// Returns the debugger's internal state.
     #[must_use]
     pub fn session<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
-        self.session.try_lock().expect("should not recursively enter debug monitor")
+        self.session
+            .try_lock()
+            .expect("should not recursively enter debug monitor")
     }
 }
 
