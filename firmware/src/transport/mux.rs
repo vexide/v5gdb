@@ -11,15 +11,27 @@
 
 #![allow(non_snake_case)]
 
-use core::cmp;
+use core::{
+    cmp,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use cobs::CobsEncoder;
 
 use crate::sdk::serial::{self, Channel};
 
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Checks whether the serial mux has been enabled.
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
 /// Capture calls to `vexSerial*` functions and automatically add multiplexing packet framing,
 /// sending them over the User channel.
 pub fn enable_auto_muxing() {
+    ENABLED.store(true, Ordering::Relaxed);
+
     unsafe {
         crate::sdk::redirect_function(
             vex_sdk::vexSerialWriteBuffer as *mut (),
@@ -48,8 +60,13 @@ pub fn enable_auto_muxing() {
 pub enum ChannelId {
     /// Standard I/O.
     User = b'u',
-    /// Debug channel. Messages should use the GDB Protocol.
+    /// Debugger channel. Messages should use the GDB Protocol.
     Debug = b'd',
+    /// Debugger logs channel.
+    ///
+    /// Data sent over this channel is never double-encoded, whereas User data may be encoded in the
+    /// PROS serial wire format, for instance.
+    DebugLog = b'l',
 }
 
 /// The size of the buffer used to build a single outgoing packet.
@@ -98,14 +115,6 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 
         // Include `0` packet delimiter.
         serial::write_all(serial::Channel::USER, &out_buf[..=length]).unwrap();
-    }
-}
-
-pub fn flush_serial() {
-    unsafe {
-        while serial::write_buf_capacity(serial::Channel::USER).unwrap() != serial::OUT_BUF_SIZE {
-            vex_sdk::vexTasksRun();
-        }
     }
 }
 

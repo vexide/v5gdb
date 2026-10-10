@@ -3,7 +3,7 @@ use std::{borrow::Cow, io};
 use cobs::{CobsDecoderOwned, DecodeError, DecodeReport};
 use thiserror::Error;
 use tokio::{
-    io::{AsyncWrite, AsyncWriteExt},
+    io::{AsyncWrite, AsyncWriteExt, Stderr, stderr},
     net::TcpStream,
 };
 use tracing::trace;
@@ -35,6 +35,7 @@ pub struct V5SerialStream<U> {
     pub client: TcpStream,
     decoder: CobsDecoderOwned,
     user_out: U,
+    debug_out: Stderr,
     error_handler: ErrorHandler,
 }
 
@@ -53,6 +54,7 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
             client,
             decoder,
             user_out,
+            debug_out: stderr(),
             error_handler,
         }
     }
@@ -94,6 +96,10 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
             }
         }
 
+        // `user_out` may buffer decoded output so it has to be flushed to make the data appear now.
+        self.user_out.flush().await?;
+        self.debug_out.flush().await?;
+
         Ok(())
     }
 
@@ -124,11 +130,15 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
 
         match packet.channel {
             Channel::User => {
-                trace!(body = %String::from_utf8_lossy(packet.body), "device -> user");
+                trace!(body = %String::from_utf8_lossy(packet.body), "dev[usr] -> usr");
                 self.user_out.write_all(packet.body).await?;
             }
+            Channel::DebuggerLog => {
+                trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> usr");
+                self.debug_out.write_all(packet.body).await?;
+            }
             Channel::Debugger => {
-                trace!(body = %String::from_utf8_lossy(packet.body), "device -> gdb");
+                trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> gdb");
                 self.client.write_all(packet.body).await?;
             }
         }
@@ -138,7 +148,7 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
 
     /// Forwards data from the client to the device and returns whether it was sent.
     pub async fn handle_client_data(&mut self, mut buf: &[u8]) -> bool {
-        trace!(body = %String::from_utf8_lossy(buf), "gdb -> device");
+        trace!(body = %String::from_utf8_lossy(buf), "gdb -> dev[gdb]");
 
         while !buf.is_empty() {
             match self.device.write_user(buf).await {
@@ -165,6 +175,7 @@ pub struct UnknownChannel(u8);
 enum Channel {
     User,
     Debugger,
+    DebuggerLog,
 }
 
 impl TryFrom<u8> for Channel {
@@ -173,6 +184,7 @@ impl TryFrom<u8> for Channel {
         match value {
             b'u' => Ok(Self::User),
             b'd' => Ok(Self::Debugger),
+            b'l' => Ok(Self::DebuggerLog),
             other => Err(UnknownChannel(other)),
         }
     }

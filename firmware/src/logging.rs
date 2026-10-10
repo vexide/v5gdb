@@ -143,22 +143,19 @@ impl Drop for BufferedSerial {
 
 #[cfg(target_arch = "arm")]
 fn write_serial(bytes: &[u8]) {
-    use crate::{
-        sdk::serial::{Channel, write_buf_capacity},
-        transport::mux::flush_serial,
-    };
+    use crate::{sdk::serial, transport::mux};
 
     if bytes.is_empty() {
         return;
     }
-    if write_buf_capacity(Channel::USER).unwrap() < bytes.len() {
-        flush_serial();
+
+    if mux::enabled() {
+        mux::write_all(mux::ChannelId::DebugLog, bytes);
+    } else {
+        _ = serial::write_all(serial::Channel::USER, bytes);
     }
 
-    unsafe {
-        vex_sdk::vexSerialWriteBuffer(Channel::USER.0, bytes.as_ptr(), bytes.len() as u32);
-    }
-    flush_serial();
+    serial::flush();
 }
 
 #[cfg(not(target_arch = "arm"))]

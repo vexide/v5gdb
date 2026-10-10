@@ -112,7 +112,7 @@ impl<W: AsyncWrite> ProsDecoder<W> {
                         Some(StreamId::Jinx) => {}
                         Some(_) => this.pending.extend_from_slice(&frame[STREAM_ID_LEN..]),
                         // If the frame starts with bogus data it's probably not actually from PROS,
-                        // so just forward the raw data
+                        // so just forward the raw data.
                         None => this.pending.extend_from_slice(this.raw_frame),
                     }
                 }
@@ -147,7 +147,8 @@ impl<W: AsyncWrite> AsyncWrite for ProsDecoder<W> {
             return Poll::Ready(Ok(buf.len()));
         };
 
-        // Start a write now we don't have to wait for the next write/flush.
+        // Start a write now so we don't have to wait for the next write/flush. Errors are ignored
+        // here because the bytes were already consumed into `pending`.
         _ = self.poll_flush_pending(cx);
         Poll::Ready(Ok(consumed))
     }

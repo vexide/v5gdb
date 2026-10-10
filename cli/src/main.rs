@@ -57,7 +57,7 @@ struct Args {
     /// pros: Program output is decoded using the PROS serial wire format.
     ///
     /// raw: No extra processing is applied.
-    #[clap(long, default_value = "auto", env = "V5GDB_COBS")]
+    #[clap(long, default_value = "auto", env = "V5GDB_USER_IO")]
     user_io: UserIoMode,
 }
 
@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
         } else {
             args.user_io = UserIoMode::Raw;
         }
-        debug!(resolved = ?args.user_io, "Resolved Auto user I/O mode");
+        debug!(resolved = ?args.user_io, "Resolved 'Auto' user I/O mode");
     }
 
     let addr = args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
         && !args.no_discover_elf
         && let Some(project) = &*project
     {
-        debug!("The user didn't specify any files to debug, so we'll look in the project dir");
+        debug!("The user didn't specify any files to debug, checking the project dir");
         args.elf_files_to_debug.extend(project.discover_elf_files());
     }
 

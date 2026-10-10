@@ -107,7 +107,7 @@ impl Connection for StdioTransport {
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         #[cfg(target_arch = "arm")]
-        mux::flush_serial();
+        serial::flush();
         Ok(())
     }
 
