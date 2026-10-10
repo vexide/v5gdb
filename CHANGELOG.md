@@ -37,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### New Contributors
 
+- @speedskater1610 made their first contribution in #22!
 - @ion098 made their first contribution in #41!
 
 ## [0.1.0-alpha.2]
