@@ -20,6 +20,7 @@ impl FindDebuggerError {
     }
 }
 
+#[derive(Debug)]
 pub struct Debugger {
     path: PathBuf,
 }

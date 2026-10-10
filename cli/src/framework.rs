@@ -3,8 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use tracing::debug;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProjectKind {
+pub enum ProjectKind {
     Pros,
 }
 
@@ -18,6 +20,7 @@ impl Project {
     pub fn discover(workspace: &Path) -> io::Result<Option<Self>> {
         let pros = workspace.join("project.pros").exists();
         if pros {
+            debug!(workspace = ?workspace, "Discovered PROS project");
             return Ok(Some(Project {
                 kind: ProjectKind::Pros,
                 root_dir: workspace.into(),
@@ -31,6 +34,10 @@ impl Project {
         Ok(None)
     }
 
+    pub fn kind(&self) -> ProjectKind {
+        self.kind
+    }
+
     pub fn discover_elf_files(&self) -> Vec<PathBuf> {
         let mut candidates = vec![];
 
@@ -42,6 +49,7 @@ impl Project {
 
                 let hot_cold = pros::is_hot_cold(&self.root_dir)
                     .unwrap_or_else(|| candidates_if_hot_cold[0].exists());
+                debug!(hot_cold = ?hot_cold, "Using PROS conventions to discover ELF files");
                 if hot_cold {
                     candidates.extend(candidates_if_hot_cold.map(PathBuf::from));
                 } else {
@@ -50,11 +58,14 @@ impl Project {
             }
         }
 
-        candidates
+        let results = candidates
             .into_iter()
             .map(|cnd| self.root_dir.join(cnd))
             .filter(|cnd| cnd.exists())
-            .collect()
+            .collect();
+
+        debug!(results = ?results, "Found these ELF files in the project");
+        results
     }
 }
 

@@ -6,10 +6,13 @@ use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
     net::TcpStream,
 };
+use tracing::trace;
 use vex_v5_serial::{
     Connection,
     serial::{SerialConnection, SerialError},
 };
+
+pub mod pros;
 
 #[derive(Debug, Error)]
 pub enum SerialStreamError<'a> {
@@ -33,8 +36,6 @@ pub struct V5SerialStream<U> {
     decoder: CobsDecoderOwned,
     user_out: U,
     error_handler: ErrorHandler,
-    /// Print all traffic to stdout.
-    pub debug_io: bool,
 }
 
 pub type ErrorHandler = Box<dyn FnMut(SerialStreamError<'_>) + Send>;
@@ -53,7 +54,6 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
             decoder,
             user_out,
             error_handler,
-            debug_io: false,
         }
     }
 
@@ -124,15 +124,11 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
 
         match packet.channel {
             Channel::User => {
-                if self.debug_io {
-                    print!("{}", String::from_utf8_lossy(packet.body));
-                }
+                trace!(body = %String::from_utf8_lossy(packet.body), "device -> user");
                 self.user_out.write_all(packet.body).await?;
             }
             Channel::Debugger => {
-                if self.debug_io {
-                    println!("> {}", String::from_utf8_lossy(packet.body));
-                }
+                trace!(body = %String::from_utf8_lossy(packet.body), "device -> gdb");
                 self.client.write_all(packet.body).await?;
             }
         }
@@ -142,9 +138,7 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
 
     /// Forwards data from the client to the device and returns whether it was sent.
     pub async fn handle_client_data(&mut self, mut buf: &[u8]) -> bool {
-        if self.debug_io {
-            println!("< {}", String::from_utf8_lossy(buf));
-        }
+        trace!(body = %String::from_utf8_lossy(buf), "gdb -> device");
 
         while !buf.is_empty() {
             match self.device.write_user(buf).await {
