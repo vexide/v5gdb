@@ -10,10 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The new `v5gdb::logging` module allows configuring the debugger's logger. (#46)
 - GDB scheduler locking is now partially supported (`set scheduler-locking on`). (#48)
+- The v5gdb CLI will now auto-detect the user's framework and use it to customize default behavior. (#49)
+- Running v5gdb without specifying any ELF files will now default to the most recent build output in a PROS project. (#49)
+- Added support for the PROS serial protocol in the v5gdb CLI. (#49)
+- The serial protocol used by the v5gdb CLI can now be customized with `--user-io` if the correct protocol is not automatically chosen. (#49)
+- Logging in the v5gdb CLI can now be customized with the `V5GDB_LOG` environment variable. (#49)
 
 ### Changed
 
 - Debugger log messages are now printed directly to serial instead of through the global `log` logger. (**Breaking change**) (#46)
+- The `v5gdb::install` function no longer requires an argument when called from C++.
+- The `v5gdb::install` function now takes an rvalue in C++. (**Breaking change**)
+- The function signatures for custom transports in C++ have been slightly tweaked. (**Breaking change**)
 
 ### Fixed
 
