@@ -230,4 +230,12 @@ pub mod serial {
             len => Some(len as usize),
         }
     }
+
+    pub fn flush() {
+        unsafe {
+            while write_buf_capacity(Channel::USER).unwrap() != OUT_BUF_SIZE {
+                vex_sdk::vexTasksRun();
+            }
+        }
+    }
 }

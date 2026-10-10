@@ -11,13 +11,27 @@
 
 #![allow(non_snake_case)]
 
+use core::{
+    cmp,
+    sync::atomic::{AtomicBool, Ordering},
+};
+
 use cobs::CobsEncoder;
 
 use crate::sdk::serial::{self, Channel};
 
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Checks whether the serial mux has been enabled.
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
 /// Capture calls to `vexSerial*` functions and automatically add multiplexing packet framing,
 /// sending them over the User channel.
 pub fn enable_auto_muxing() {
+    ENABLED.store(true, Ordering::Relaxed);
+
     unsafe {
         crate::sdk::redirect_function(
             vex_sdk::vexSerialWriteBuffer as *mut (),
@@ -46,20 +60,28 @@ pub fn enable_auto_muxing() {
 pub enum ChannelId {
     /// Standard I/O.
     User = b'u',
-    /// Debug channel. Messages should use the GDB Protocol.
+    /// Debugger channel. Messages should use the GDB Protocol.
     Debug = b'd',
+    /// Debugger logs channel.
+    ///
+    /// Data sent over this channel is never double-encoded, whereas User data may be encoded in the
+    /// PROS serial wire format, for instance.
+    DebugLog = b'l',
 }
 
 /// The size of the buffer used to build a single outgoing packet.
 ///
-/// This is deliberately much smaller than [`serial::OUT_BUF_SIZE`]: writes are muxed from whatever
-/// task called `vexSerial*`, and some of those have very little stack to spare. PROS's
-/// `Serial Daemon` task, for example, gets only 2 KiB in total, so a large buffer here overflows it
-/// on the first flush of stdout.
-///
-/// The buffer has to live on the stack rather than in a static because [`write_all`] is reentrant:
-/// a debug exception can interrupt a task partway through a write and send a packet of its own.
+/// This is intentionally a lot smaller than the system's out buffer size to support tasks with very
+/// small stack sizes (including the PROS serial daemon which only has 2 KiB of stack). We also
+/// can't put this in a static because that would be corrupted if we paused during a [`write_all`].
 const PACKET_BUF_SIZE: usize = 128;
+
+/// The largest number of payload bytes that fit in one packet.
+///
+/// There are three bytes of overhead: the channel ID, COBS overhead, and finally a \0 delimiter.
+const MAX_PAYLOAD_LEN: usize = PACKET_BUF_SIZE - 3;
+#[expect(clippy::int_plus_one)]
+const _: () = assert!(cobs::max_encoding_length(1 + MAX_PAYLOAD_LEN) + 1 <= PACKET_BUF_SIZE);
 
 /// Write one or more COBS-encoded packets to serial output, each prefixed with the given channel
 /// id.
@@ -75,15 +97,14 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 
         let mut encoder = CobsEncoder::new(out_buf_without_delimiter);
 
-        encoder.push(&[channel as u8]).unwrap();
+        // Put as many bytes as possible into this packet. The chunk size has to be worked out in
+        // advance because a failed `push` still advances the encoder's state (this is probably
+        // a bug in the cobs crate).
+        let (chunk, rest) = buf.split_at(cmp::min(buf.len(), MAX_PAYLOAD_LEN));
+        buf = rest;
 
-        // Put as many bytes as possible into this packet.
-        while let Some(&byte) = buf.first() {
-            let Ok(_) = encoder.push(&[byte]) else {
-                break;
-            };
-            buf = &buf[1..];
-        }
+        encoder.push(&[channel as u8]).unwrap();
+        encoder.push(chunk).unwrap();
 
         let length = encoder.finalize();
 
@@ -94,14 +115,6 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 
         // Include `0` packet delimiter.
         serial::write_all(serial::Channel::USER, &out_buf[..=length]).unwrap();
-    }
-}
-
-pub fn flush_serial() {
-    unsafe {
-        while serial::write_buf_capacity(serial::Channel::USER).unwrap() != serial::OUT_BUF_SIZE {
-            vex_sdk::vexTasksRun();
-        }
     }
 }
 
