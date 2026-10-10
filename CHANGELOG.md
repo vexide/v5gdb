@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.1.0-alpha.3]
 
 ### Added
 
@@ -75,3 +75,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 [0.1.0-alpha.1]: https://github.com/vexide/v5gdb/compare/160aa901a471ab20d139c07d9adc3479c8823dea...v0.1.0-alpha.1
 [0.1.0-alpha.2]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
+[0.1.0-alpha.3]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
