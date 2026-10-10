@@ -1,20 +1,24 @@
-use std::{process::exit, time::Duration};
+use std::{env::current_dir, path::PathBuf, process::exit, time::Duration};
 
 use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, stderr},
     net::TcpListener,
-    process::Command,
     time::sleep,
 };
 use vex_v5_serial::{
     Connection,
     serial::{SerialDevice, find_devices},
 };
-use which::which;
 
-use crate::serial::{ErrorHandler, SerialStreamError, V5SerialStream};
+use crate::{
+    debugger::Debugger,
+    framework::Project,
+    serial::{ErrorHandler, SerialStreamError, V5SerialStream},
+};
 
+mod debugger;
+mod framework;
 mod serial;
 
 /// Use GDB to debug a VEX V5 robot running the v5gdb debug server.
@@ -26,15 +30,18 @@ struct Args {
     #[clap(long)]
     tcp: Option<String>,
     /// List of ELF files to debug with GDB (has no effect in TCP mode).
-    elf_files_to_debug: Vec<String>,
+    elf_files_to_debug: Vec<PathBuf>,
     /// Prints verbose serial I/O logs and errors to stdout.
     #[clap(long)]
     debug_io: bool,
+    /// Disables auto-discovery of ELF files when none are specified.
+    #[clap(long, env = "V5GDB_NO_DISCOVER_ELF")]
+    no_discover_elf: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let mut all_devices = find_devices()?;
     if all_devices.is_empty() {
@@ -56,74 +63,15 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let known_gdb_names = ["arm-none-eabi-gdb", "gdb-multiarch", "gdb"];
-    let resolved_gdb = known_gdb_names.into_iter().find_map(|n| which(n).ok());
-
-    let Some(resolved_gdb) = resolved_gdb else {
-        eprintln!("Error: One of the following GDB executables must be installed.");
-        eprintln!("{:?}", known_gdb_names);
-        exit(1);
-    };
-
-    let mut cmd = Command::new(resolved_gdb);
-
-    let mut elves = args.elf_files_to_debug.iter();
-    if let Some(main_elf_file) = elves.next() {
-        cmd.arg(format!("--eval-command=file {main_elf_file}"));
-    }
-    for elf_file in elves {
-        // `with confirm off` skips the "add symbol table from file" prompt.
-        cmd.arg(format!(
-            "--eval-command=with confirm off -- add-symbol-file {elf_file}"
-        ));
+    if args.elf_files_to_debug.is_empty()
+        && !args.no_discover_elf
+        && let Ok(Some(project)) = Project::discover(&current_dir()?)
+    {
+        args.elf_files_to_debug.extend(project.discover_elf_files());
     }
 
-    cmd.arg("--eval-command=target remote :35537");
-
-    let mut gdb = cmd.spawn()?;
-
-    cfg_select! {
-        // On Unix, ignore SIGINT (Ctrl-C) since it's delivered to the whole foreground process
-        // group including GDB, which has its own logic to handle signals.
-        unix => {
-            use tokio::signal::unix::{SignalKind, signal};
-
-            let mut sigint = signal(SignalKind::interrupt())?;
-            let mut sigterm = signal(SignalKind::terminate())?;
-
-            loop {
-                tokio::select! {
-                    status = gdb.wait() => {
-                        status?;
-                        break;
-                    }
-                    _ = sigint.recv() => {}
-                    _ = sigterm.recv() => {}
-                }
-            }
-        }
-        // It's similar on Windows but we receive a Ctrl-C event / a Ctrl-Break event instead.
-        windows => {
-            use tokio::signal::windows::{ctrl_break, ctrl_c};
-
-            let mut ctrl_c = ctrl_c()?;
-            let mut ctrl_break = ctrl_break()?;
-
-            loop {
-                tokio::select! {
-                    status = gdb.wait() => {
-                        status?;
-                        break;
-                    }
-                    _ = ctrl_c.recv() => {}
-                    _ = ctrl_break.recv() => {}
-                }
-            }
-        }
-        _ => {
-            gdb.wait().await?;
-        }
-    }
+    let debugger = Debugger::find()?;
+    debugger.start(&args.elf_files_to_debug).await?;
 
     Ok(())
 }
