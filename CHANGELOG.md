@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - The new `v5gdb::logging` module allows configuring the debugger's logger. (#46)
+- GDB scheduler locking is now partially supported (`set scheduler-locking on`). (#48)
 
 ### Changed
 
@@ -23,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Recursively entering the debug monitor now panics instead of locking up the system. (#44)
 - Software breakpoint addresses are now validates properly. (#41)
 - The FreeRTOS monitor help now says "Stack Remaining" is measured in words, not bytes.
+- Unsupported resume configurations will now print an error instead of crashing. (#48)
+- v5gdb now reports the actual current thread to GDB instead of the highest priority one. (#48)
 
 ### New Contributors
 
