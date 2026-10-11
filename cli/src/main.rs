@@ -94,6 +94,10 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
     let server = TcpListener::bind(addr).await?;
+    if args.tcp.is_some() {
+        // This allows VS Code and others to know when we're ready to connect.
+        eprintln!("Listening on {}", server.local_addr()?);
+    }
     let server_task = tokio::spawn(async move {
         serve_device_serial(device, server, args.user_io)
             .await
