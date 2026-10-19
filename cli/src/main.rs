@@ -33,9 +33,9 @@ enum UserIoMode {
 
 /// Use GDB to debug a VEX V5 robot running the v5gdb debug server.
 ///
-/// This command can only connect to robots that are currently stopped at a breakpoint. Use the
-/// V5GDB_LOG environment variable to enable internal CLI logging. On-device logging can be
-/// controlled using GDB monitor commands.
+/// This command interrupts the program on connect, so it can attach to robots that are running or
+/// already stopped at a breakpoint. Use the V5GDB_LOG environment variable to enable internal CLI
+/// logging. On-device logging can be controlled using GDB monitor commands.
 #[derive(Debug, clap::Parser)]
 struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
@@ -155,7 +155,12 @@ async fn serve_device_serial(
     server: TcpListener,
     user_io: UserIoMode,
 ) -> anyhow::Result<()> {
-    let dev_conn = device.connect(Duration::from_secs(5))?;
+    let mut dev_conn = device.connect(Duration::from_secs(5))?;
+
+    // Pause the program in case it's running so that GDB can attach to it.
+    const CTRL_C: u8 = 0x03;
+    debug!("Sending interrupt to device");
+    dev_conn.write_user(&[CTRL_C]).await?;
 
     let mut program_output = [0; 2048];
     let mut program_input = [0; 4096];
