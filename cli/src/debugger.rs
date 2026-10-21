@@ -91,7 +91,7 @@ async fn wait(process: &mut Child) -> io::Result<()> {
 
             loop {
                 tokio::select! {
-                    status = gdb.wait() => {
+                    status = process.wait() => {
                         status?;
                         break;
                     }
@@ -101,7 +101,7 @@ async fn wait(process: &mut Child) -> io::Result<()> {
             }
         }
         _ => {
-            gdb.wait().await?;
+            process.wait().await?;
         }
     }
 
