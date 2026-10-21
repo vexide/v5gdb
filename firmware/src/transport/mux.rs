@@ -32,6 +32,10 @@ pub fn enabled() -> bool {
 pub fn enable_auto_muxing() {
     ENABLED.store(true, Ordering::Relaxed);
 
+    // Anything written before this point (e.g. vexide's startup banner) isn't framed and could
+    // confuse the COBS decoder on the host, so reset its state by sending a packet delimiter.
+    serial::write_all(serial::Channel::USER, &[0]).unwrap();
+
     unsafe {
         crate::sdk::redirect_function(
             vex_sdk::vexSerialWriteBuffer as *mut (),

@@ -1,6 +1,6 @@
-use std::{borrow::Cow, io};
+use std::{borrow::Cow, io, mem};
 
-use cobs::{CobsDecoderOwned, DecodeError, DecodeReport};
+use cobs::{CobsDecoderOwned, DecodeError};
 use thiserror::Error;
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt, Stderr, stderr},
@@ -21,10 +21,10 @@ pub enum SerialStreamError<'a> {
         source: PacketParseError,
         raw_frame: Cow<'a, [u8]>,
     },
-    #[error("failed to decode COBS frame (invalid byte: {invalid_byte:#x?})")]
+    #[error("failed to decode COBS frame")]
     CobsDecode {
         source: DecodeError,
-        invalid_byte: u8,
+        raw_frame: Cow<'a, [u8]>,
     },
     #[error("failed to communicate with device")]
     Serial(#[from] SerialError),
@@ -34,6 +34,8 @@ pub struct V5SerialStream<U> {
     pub device: SerialConnection,
     pub client: TcpStream,
     decoder: CobsDecoderOwned,
+    /// The raw bytes of the frame currently being decoded, excluding delimiters.
+    raw_frame: Vec<u8>,
     user_out: U,
     debug_out: Stderr,
     error_handler: ErrorHandler,
@@ -53,6 +55,7 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
             device,
             client,
             decoder,
+            raw_frame: Vec::new(),
             user_out,
             debug_out: stderr(),
             error_handler,
@@ -61,37 +64,32 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
 
     /// Handle incoming raw data from remote device.
     ///
-    /// This will try to coerce any incoming data into packets from v5gdb. Any invalid data is just
-    /// printed to the user output stream.
-    pub async fn handle_device_data(&mut self, mut incoming_bytes: &[u8]) -> io::Result<()> {
-        while !incoming_bytes.is_empty() {
-            // If we receive any invalid packets, they might be prints from the user, so
-            // we should print them out as-is.
+    /// This will try to coerce any incoming data into packets from v5gdb. Any data that can't be
+    /// decoded (such as output written before the device enabled muxing) is printed to the user
+    /// output stream as-is.
+    pub async fn handle_device_data(&mut self, incoming_bytes: &[u8]) -> io::Result<()> {
+        for &byte in incoming_bytes {
+            // Zero bytes are frame delimiters, so they're never part of a frame's contents.
+            if byte != 0 {
+                self.raw_frame.push(byte);
+            }
 
-            match self.decoder.push(incoming_bytes) {
-                Ok(Some(report)) => {
-                    self.decoder.reset();
-                    let (raw_frame, rest) = incoming_bytes.split_at(report.parsed_size());
-                    self.handle_device_frame(report, raw_frame).await?;
-                    incoming_bytes = rest;
+            match self.decoder.feed(byte) {
+                Ok(None) => {}
+                Ok(Some(frame_size)) => {
+                    let raw_frame = mem::take(&mut self.raw_frame);
+                    self.handle_device_frame(frame_size, &raw_frame).await?;
                 }
                 Err(err) => {
+                    // The data since the last delimiter might be prints from the user, so print it
+                    // out as-is and start a new frame.
                     self.decoder.reset();
-
-                    // We are only discarding one byte, so print that one.
-                    let invalid_byte = incoming_bytes[0];
-                    self.user_out.write_all(&[invalid_byte]).await?;
+                    let raw_frame = mem::take(&mut self.raw_frame);
+                    self.user_out.write_all(&raw_frame).await?;
                     (self.error_handler)(SerialStreamError::CobsDecode {
                         source: err,
-                        invalid_byte,
+                        raw_frame: Cow::Owned(raw_frame),
                     });
-
-                    // Skip one byte to try to resynchronize
-                    incoming_bytes = &incoming_bytes[1..];
-                }
-                Ok(None) => {
-                    // The frame is split across reads, wait for more data.
-                    break;
                 }
             }
         }
@@ -107,12 +105,8 @@ impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
     ///
     /// If the frame cannot be parsed, its raw contents (before COBS decoding) are printed to
     /// the user output stream.
-    async fn handle_device_frame(
-        &mut self,
-        report: DecodeReport,
-        raw_frame: &[u8],
-    ) -> io::Result<()> {
-        let packet_bytes = &self.decoder.dest()[..report.frame_size()];
+    async fn handle_device_frame(&mut self, frame_size: usize, raw_frame: &[u8]) -> io::Result<()> {
+        let packet_bytes = &self.decoder.dest()[..frame_size];
 
         let packet = match Packet::parse(packet_bytes) {
             Ok(packet) => packet,

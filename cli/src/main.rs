@@ -170,8 +170,8 @@ async fn serve_device_serial(
         SerialStreamError::PacketParse { source, raw_frame } => {
             trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "unknown frame");
         }
-        SerialStreamError::CobsDecode { invalid_byte, .. } => {
-            trace!(invalid_byte = ?String::from_utf8_lossy(&[invalid_byte]), "invalid COBS byte");
+        SerialStreamError::CobsDecode { source, raw_frame } => {
+            trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "invalid COBS frame");
         }
     });
 
