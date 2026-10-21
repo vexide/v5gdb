@@ -129,11 +129,54 @@ pub(crate) mod arm {
         options(raw),
     );
 
-    const ABORT_STACK_SIZE: usize = 0x8000; // 32KB
+    /// Size of the Abort mode stack, including the guard region.
+    ///
+    /// Debug builds use a lot of stack space: e.g. `Command::from_packet` in gdbstub has a ~21 KiB
+    /// stack frame, and the same stack is used by the IRQ routines as well.
+    const ABORT_STACK_SIZE: usize = 0x10000; // 64KB
+
+    /// Size of the region at the bottom of the Abort mode stack that's filled with
+    /// [`STACK_GUARD_PATTERN`] so overflows can be detected.
+    const STACK_GUARD_WORDS: usize = 0x1000 / size_of::<u32>(); // 4KB
+    const STACK_GUARD_PATTERN: u32 = 0xA5A5_5A5A;
 
     #[repr(C, align(8))]
     struct AbortStack(MaybeUninit<[u8; const { ABORT_STACK_SIZE }]>);
     static mut ABORT_STACK: AbortStack = AbortStack(MaybeUninit::uninit());
+
+    /// Returns a pointer to the guard region at the bottom of the Abort mode stack.
+    const fn stack_guard() -> *mut u32 {
+        (&raw mut ABORT_STACK).cast()
+    }
+
+    /// Fills the Abort mode stack's guard region with [`STACK_GUARD_PATTERN`].
+    ///
+    /// # Safety
+    ///
+    /// The Abort mode stack must not be in use.
+    unsafe fn init_stack_guard() {
+        for i in 0..STACK_GUARD_WORDS {
+            // SAFETY: The stack guard doesn't store any data used by Rust and shouldn't trap when
+            // we read it.
+            unsafe {
+                stack_guard().add(i).write_volatile(STACK_GUARD_PATTERN);
+            }
+        }
+    }
+
+    /// Panics if the Abort mode stack has grown into its guard region.
+    ///
+    /// The stack is placed right after `.data`, so an overflow can corrupt the user program's
+    /// static variables. This stack guard is intended to catch this before we return control to the
+    /// user program, since it would be confusing if the user program failed when it was actually
+    /// v5gdb's fault.
+    fn check_stack_guard() {
+        // SAFETY: The stack guard doesn't store any data used by Rust and shouldn't trap when we
+        // read it.
+        let intact = (0..STACK_GUARD_WORDS)
+            .all(|i| unsafe { stack_guard().add(i).read_volatile() } == STACK_GUARD_PATTERN);
+        assert!(intact, "v5gdb's Abort mode stack overflowed");
+    }
 
     /// Handles a debug event.
     ///
@@ -151,7 +194,10 @@ pub(crate) mod arm {
     /// The callee must always resume the system scheduler after calling this function.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) -> bool {
-        unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) }
+        let resume_scheduler = unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) };
+        // The stack is nearly empty here so there should be enough room to report any overflow.
+        check_stack_guard();
+        resume_scheduler
     }
 
     /// Minimum interval, in milliseconds, between calls to `Debugger::poll`.
@@ -258,6 +304,8 @@ pub(crate) mod arm {
                 // since the vector table is responsible for handling those
                 // exceptions.
                 asm!("cpsid f", options(nostack, nomem, preserves_flags));
+
+                init_stack_guard();
 
                 // The default stack that VEXos gives us in abort mode is only 1kb, which is
                 // extremely inadequate for what we're doing in the debug event handler, so we
