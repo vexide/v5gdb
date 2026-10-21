@@ -352,6 +352,12 @@ where
                         .expect("debugger encountered an error");
                 }
 
+                // gdbstub doesn't flush after acknowledging a resume packet, so send the ack
+                // before the program starts running.
+                if let GdbStubStateMachine::Running(gdb) = &mut state {
+                    let _ = gdb.borrow_conn().flush();
+                }
+
                 self.stage = state.into();
             }
             SessionStage::Transitioning => panic!("Cannot resume from transitioning state"),
