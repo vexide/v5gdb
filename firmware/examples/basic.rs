@@ -29,7 +29,6 @@ async fn main(_peripherals: Peripherals) {
     v5gdb::logging::set_max_level(log_level);
 
     v5gdb::install(V5Debugger::new(StdioTransport::new()));
-    v5gdb::breakpoint!();
 
     loop {
         let num = 40;

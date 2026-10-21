@@ -1,8 +1,8 @@
 //! Ctrl-C halt test.
 //!
 //! Usage:
-//! 1. Terminal A: `v5gdb --tcp 127.0.0.1:35537` (connects to v5gdb debugger on V5 brain).
-//! 2. Terminal B: `gdb target/armv7a-vex-v5/debug/examples/spin -ex "target remote :35537"`.
+//! 1. Start the program.
+//! 2. Connect with `v5gdb target/armv7a-vex-v5/debug/examples/spin`
 //! 3. In GDB: `continue`, then press Ctrl-C.
 //!
 //! GDB should report that the program received a SIGINT and enter the debug monitor.
@@ -31,10 +31,6 @@ async fn main(_peripherals: Peripherals) {
 
     v5gdb::install(V5Debugger::new(StdioTransport::new()));
 
-    // Stop here so GDB can attach before we get stuck.
-    v5gdb::breakpoint!();
-
-    println!("About to start spinning; attach GDB, `continue`, then press Ctrl-C");
     unsafe {
         vexTasksRun();
     }

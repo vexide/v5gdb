@@ -190,6 +190,9 @@ impl V5Target {
 
         static BKPT_LOG: Once = Once::new();
         BKPT_LOG.call_once(|| {
+            if self.interrupt_pending() {
+                return; // The user requested the pause, so they already know this.
+            }
             logging::warn!("Your program has been paused. Please connect a debugger.");
         });
 

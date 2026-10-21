@@ -231,7 +231,9 @@ where
     fn start(&mut self) {
         let stage = mem::replace(&mut self.stage, SessionStage::Transitioning);
         self.stage = match stage {
-            SessionStage::Uninitialized(gdb) => gdb.run_state_machine(&mut self.target).unwrap().into(),
+            SessionStage::Uninitialized(gdb) => {
+                gdb.run_state_machine(&mut self.target).unwrap().into()
+            }
             other => other,
         };
     }
@@ -381,7 +383,9 @@ where
                 Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
-                logging::warn!("GDB sent an interrupt (Ctrl+C) while already paused");
+                logging::warn!(
+                    "Received a request to pause the program while it was already paused."
+                );
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }
