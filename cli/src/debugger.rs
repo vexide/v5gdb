@@ -20,6 +20,21 @@ impl FindDebuggerError {
     }
 }
 
+/// Commands which are fed to GDB before connecting to the V5 Brain to improve performance and
+/// compatibility.
+const GDB_STARTUP_COMMANDS: [&str; 3] = [
+    // Ask GDB to cache RAM data instead of asking the target to re-send it every single time.
+    // GDB clears the cache whenever the program resumes. This overwrites the memory map that the
+    // v5gdb library sends, so it should be kept in sync with:
+    // `firmware/src/gdb_target/arch/memory_map.xml`
+    "mem 0x100000 0x2c00000 ro cache",
+    "mem 0x2c00000 0x8000000 rw cache",
+    // Ask GDB to send larger 1024-byte-sized chunks of memory when it needs to read from the
+    // target. This should help reduce the number of packet round trips. See:
+    // <https://sourceware.org/gdb/current/onlinedocs/gdb.html/Caching-Target-Data.html>
+    "set dcache line-size 1024",
+];
+
 #[derive(Debug)]
 pub struct Debugger {
     path: PathBuf,
@@ -52,6 +67,9 @@ impl Debugger {
             ));
         }
 
+        for command in GDB_STARTUP_COMMANDS {
+            cmd.arg(format!("--eval-command={command}"));
+        }
         cmd.arg("--eval-command=target remote :35537");
 
         let mut gdb = cmd.spawn()?;

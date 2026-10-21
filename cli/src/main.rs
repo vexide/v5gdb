@@ -4,7 +4,6 @@ use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
     net::TcpListener,
-    time::sleep,
 };
 use tracing::{debug, error, trace};
 use tracing_subscriber::EnvFilter;
@@ -189,8 +188,16 @@ async fn serve_device_serial(
     loop {
         tokio::select! {
             read = stream.device.read_user(&mut program_output) => {
-                if let Ok(size) = read {
-                    stream.handle_device_data(&program_output[..size]).await?;
+                match read {
+                    Ok(0) => {
+                        error!("Device disconnected");
+                        break;
+                    }
+                    Ok(size) => stream.handle_device_data(&program_output[..size]).await?,
+                    Err(err) => {
+                        error!("Device disconnected: {err}");
+                        break;
+                    }
                 }
             },
             read = stream.client.read(&mut program_input) => {
@@ -204,12 +211,13 @@ async fn serve_device_serial(
                             break;
                         }
                     }
-                    _ => {}
+                    Err(err) => {
+                        error!("GDB connection closed: {err}");
+                        break;
+                    }
                 }
             }
         }
-
-        sleep(Duration::from_millis(10)).await;
     }
 
     Ok(())
