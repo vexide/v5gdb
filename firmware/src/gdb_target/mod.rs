@@ -338,6 +338,13 @@ impl V5Target {
         exceptions::set_user_irq_bypass(true);
     }
 
+    /// Returns whether [`Self::request_interrupt`] has been called but the program has not yet
+    /// been stopped.
+    #[must_use]
+    pub fn interrupt_pending(&self) -> bool {
+        self.interrupt_pending
+    }
+
     /// Remove a breakpoint installed by [`Self::request_interrupt`], if any.
     fn finalize_interrupt(&mut self) {
         if self.interrupt_pending {

@@ -122,6 +122,10 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         // V5Target are the source of truth so `self.config` is never read again.
         session.target.stop_motors_on_break = self.config.stop_motors_on_break;
 
+        // Start the transport session & GDB state machine now so we can start receiving Ctrl-C
+        // packets, even if we haven't hit a breakpoint yet.
+        session.start();
+
         logging::debug!("Debugger initialized (config={:?})", self.config);
     }
 
@@ -152,19 +156,34 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
 
         // A failed try_lock means the monitor is active. In that case the serial stream carries
         // real GDB protocol traffic so we shouldn't touch it.
-        if let Some(mut session) = self.session.try_lock()
-            && let SessionStage::Active(gdb_state) = &mut session.stage
-            && let GdbStubStateMachine::Running(gdb) = gdb_state
-        {
-            const CTRL_C: u8 = 0x03;
+        let Some(mut session) = self.session.try_lock() else {
+            return;
+        };
 
-            // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
-            // Search all pending bytes for interrupts.
-            while let Ok(Some(byte)) = gdb.borrow_conn().try_read() {
-                if byte == CTRL_C {
-                    session.target.request_interrupt();
-                    break;
-                }
+        // If an interrupt is already pending then there's no need to scan transport data in the
+        // background, since we're about to handle it anyways.
+        if session.target.interrupt_pending() {
+            return;
+        }
+
+        let SessionStage::Active(gdb_state) = &mut session.stage else {
+            return;
+        };
+
+        let conn = match gdb_state {
+            GdbStubStateMachine::Running(gdb) => gdb.borrow_conn(),
+            // "Idle" while the debug monitor is inactive means no client has connected yet.
+            GdbStubStateMachine::Idle(gdb) => gdb.borrow_conn(),
+            _ => return,
+        };
+
+        const CTRL_C: u8 = 0x03;
+
+        // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
+        while let Ok(Some(byte)) = conn.try_read() {
+            if byte == CTRL_C {
+                session.target.request_interrupt();
+                break;
             }
         }
     }
@@ -208,12 +227,25 @@ impl<S> DebugSession<'_, S>
 where
     S: Transport,
 {
+    /// Starts the GDB session if it hasn't been started yet.
+    fn start(&mut self) {
+        let stage = mem::replace(&mut self.stage, SessionStage::Transitioning);
+        self.stage = match stage {
+            SessionStage::Uninitialized(gdb) => gdb.run_state_machine(&mut self.target).unwrap().into(),
+            other => other,
+        };
+    }
+
+    /// Returns whether a GDB client is connected.
+    ///
+    /// Only valid outside the debug monitor. The session is in `Running` while a client has
+    /// resumed the program and `Idle` before any client has connected. Disconnects only happen
+    /// inside the debug monitor, which stays active until a new client resumes the program.
     fn has_client(&self) -> bool {
-        match &self.stage {
-            SessionStage::Active(GdbStubStateMachine::Disconnected(_)) => false,
-            SessionStage::Active(_) => true,
-            _ => false,
-        }
+        matches!(
+            self.stage,
+            SessionStage::Active(GdbStubStateMachine::Running(_))
+        )
     }
 
     /// Respond to entering a breakpoint and decide whether the user should be notified of it.
