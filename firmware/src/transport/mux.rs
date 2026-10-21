@@ -83,7 +83,7 @@ const PACKET_BUF_SIZE: usize = 128;
 /// The largest number of payload bytes that fit in one packet.
 ///
 /// There are three bytes of overhead: the channel ID, COBS overhead, and finally a \0 delimiter.
-const MAX_PAYLOAD_LEN: usize = PACKET_BUF_SIZE - 3;
+pub const MAX_PAYLOAD_LEN: usize = PACKET_BUF_SIZE - 3;
 #[expect(clippy::int_plus_one)]
 const _: () = assert!(cobs::max_encoding_length(1 + MAX_PAYLOAD_LEN) + 1 <= PACKET_BUF_SIZE);
 

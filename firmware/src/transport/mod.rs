@@ -1,5 +1,6 @@
 use core::{
     cell::UnsafeCell,
+    cmp,
     error::Error,
     fmt::{self, Debug, Display},
     marker::PhantomData,
@@ -60,6 +61,7 @@ pub unsafe trait Transport:
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct StdioTransport {
+    buffer: heapless::Vec<u8, { mux::MAX_PAYLOAD_LEN }>,
     // Serial reading is single-consumer.
     _unsync: PhantomData<UnsafeCell<()>>,
 }
@@ -80,7 +82,14 @@ impl StdioTransport {
     pub const fn new() -> Self {
         Self {
             _unsync: PhantomData,
+            buffer: heapless::Vec::new(),
         }
+    }
+
+    fn tx_packet(&mut self) {
+        #[cfg(target_arch = "arm")]
+        mux::write_all(mux::ChannelId::Debug, &self.buffer);
+        self.buffer.clear();
     }
 }
 
@@ -94,18 +103,36 @@ impl Connection for StdioTransport {
     type Error = TransportError;
 
     fn write(&mut self, byte: u8) -> Result<(), Self::Error> {
-        #[cfg(target_arch = "arm")]
-        mux::write_all(mux::ChannelId::Debug, &[byte]);
+        if self.buffer.is_full() {
+            self.tx_packet();
+        }
+        self.buffer.push(byte).unwrap();
         Ok(())
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
-        #[cfg(target_arch = "arm")]
-        mux::write_all(mux::ChannelId::Debug, buf);
+    fn write_all(&mut self, mut buf: &[u8]) -> Result<(), Self::Error> {
+        while !buf.is_empty() {
+            if self.buffer.is_full() {
+                self.tx_packet();
+            }
+
+            let remaining_in_packet =
+                cmp::min(buf.len(), self.buffer.capacity() - self.buffer.len());
+            let (slice, rest) = buf.split_at(remaining_in_packet);
+
+            buf = rest;
+            if slice.len() == self.buffer.capacity() {
+                #[cfg(target_arch = "arm")]
+                mux::write_all(mux::ChannelId::Debug, slice);
+            } else {
+                self.buffer.extend(slice.iter().copied());
+            }
+        }
         Ok(())
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
+        self.tx_packet();
         #[cfg(target_arch = "arm")]
         serial::flush();
         Ok(())
