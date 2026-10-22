@@ -51,8 +51,8 @@ class Transport {
     Transport(Transport&&) noexcept = default;
     virtual ~Transport() = default;
 
-    /// Called once when the debug session starts.
-    virtual void initialize() noexcept {}
+    /// Called whenever the GDB session is initialized or re-initialized.
+    virtual void session_start() noexcept {}
 
     /// Writes packet data to GDB.
     [[nodiscard]]
@@ -86,8 +86,8 @@ class Transport {
         return result ? nullptr : result.error();
     }
 
-    static void initialize_trampoline(void* data) noexcept {
-        cast(data).initialize();
+    static void session_start_trampoline(void* data) noexcept {
+        cast(data).session_start();
     }
 
     static char const* write_trampoline(
@@ -147,7 +147,7 @@ void install(T&& transport) noexcept {
     impl::v5gdb_install_custom(
         impl::TransportImpl {
             .data = static_cast<void*>(&stored),
-            .initialize = Transport::initialize_trampoline,
+            .session_start = Transport::session_start_trampoline,
             .write_buf = Transport::write_trampoline,
             .flush = Transport::flush_trampoline,
             .peek_byte = Transport::peek_trampoline,

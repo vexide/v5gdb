@@ -935,6 +935,7 @@ dependencies = [
  "derive-mmio",
  "derive_more",
  "gdbstub",
+ "hash32",
  "heapless",
  "log",
  "owo-colors",
