@@ -77,6 +77,7 @@ derive_more = { version = "2.1.1", features = ["from"], default-features = false
 static_cell = { version = "2.1.0", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
 heapless = "0.9.3"
+hash32 = "0.3"
 
 [target."cfg(target_arch = \"arm\")".dependencies]
 zynq7000 = "0.6.0"

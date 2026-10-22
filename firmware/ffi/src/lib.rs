@@ -46,8 +46,8 @@ pub enum PeekResult {
 pub struct TransportImpl {
     /// Custom data, passed to each function.
     pub data: *mut c_void,
-    /// One-time initialize callback. Called on first breakpoint.
-    pub initialize: unsafe extern "C" fn(data: *mut c_void),
+    /// Called whenever the GDB session is initialized or re-initialized.
+    pub session_start: unsafe extern "C" fn(data: *mut c_void),
     /// Write a buffer containing packet data to GDB.
     ///
     /// Returns a static error string if an error occurred, or null if the operation was
@@ -102,7 +102,7 @@ impl Connection for TransportImpl {
 
     fn on_session_start(&mut self) -> Result<(), Self::Error> {
         unsafe {
-            (self.initialize)(self.data);
+            (self.session_start)(self.data);
         }
         Ok(())
     }

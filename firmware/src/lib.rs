@@ -80,7 +80,7 @@ mod debugger_stub {
     }
 
     unsafe impl<S: Transport + Send + 'static> Debugger for V5Debugger<S> {
-        fn initialize(&self) {}
+        fn initialize(&'static self) {}
 
         unsafe fn handle_debug_event(
             &self,
@@ -100,7 +100,9 @@ pub static DEBUGGER: Once<&dyn Debugger> = Once::new();
 /// The debugger must not corrupt the CPU state when handling debug events.
 pub unsafe trait Debugger: Send + Sync + Any {
     /// Initializes the debugger.
-    fn initialize(&self);
+    ///
+    /// This is called once the debugger has been installed, so it can rely on `self` never moving.
+    fn initialize(&'static self);
 
     /// A callback function which is run whenever a breakpoint is triggered.
     ///
@@ -140,7 +142,7 @@ pub fn install_by_ref(debugger: &'static dyn Debugger) {
     #[cfg(target_arch = "arm")]
     exceptions::install_vectors();
 
-    DEBUGGER.get().unwrap().initialize();
+    debugger.initialize();
 }
 
 /// Manually trigger a breakpoint.

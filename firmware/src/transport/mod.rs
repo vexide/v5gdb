@@ -11,6 +11,7 @@ use vex_sdk::vexTasksRun;
 
 use crate::sdk::serial::{self, Channel};
 
+pub(crate) mod link;
 #[cfg(target_arch = "arm")]
 pub mod mux;
 

@@ -1,10 +1,9 @@
 //! Main debugger loop and event handling logic.
 
-use core::mem;
+use core::{mem, ptr::NonNull};
 
-use derive_more::From;
 use gdbstub::{
-    conn::Connection,
+    conn::{Connection, ConnectionExt},
     stub::{
         GdbStub, GdbStubBuilder, GdbStubError, MultiThreadStopReason, SingleThreadStopReason,
         state_machine::GdbStubStateMachine,
@@ -23,8 +22,25 @@ use crate::{
     logging,
     sdk::stop_all_motors,
     sys::{DebuggerSystem, System},
-    transport::{Transport, TransportError},
+    transport::{
+        Transport, TransportError,
+        link::{Link, LinkHandle},
+    },
 };
+
+const PACKET_BUFFER_SIZE: usize = 4096;
+const TX_BUFFER_SIZE: usize = 2 * PACKET_BUFFER_SIZE;
+
+// These are stored as globals (in .bss) to help limit stack usage.
+
+/// Used by gdbstub to build responses and decode incoming data.
+static PACKET_BUFFER: ConstStaticCell<[u8; PACKET_BUFFER_SIZE]> =
+    ConstStaticCell::new([0; PACKET_BUFFER_SIZE]);
+/// Holds incoming packets before they are passed along to gdbstub.
+static RX_BUFFER: ConstStaticCell<[u8; PACKET_BUFFER_SIZE]> =
+    ConstStaticCell::new([0; PACKET_BUFFER_SIZE]);
+/// Holds the last outgoing packet so it can be sent again if the client NACKs.
+static TX_BUFFER: ConstStaticCell<[u8; TX_BUFFER_SIZE]> = ConstStaticCell::new([0; TX_BUFFER_SIZE]);
 
 #[derive(Debug, Error)]
 pub enum DebuggerError {
@@ -53,6 +69,11 @@ pub struct DebuggerConfig {
 /// Debugger manager.
 pub struct V5Debugger<S: Transport> {
     session: Mutex<DebugSession<'static, S>>,
+    /// The connection to GDB.
+    ///
+    /// gdbstub accesses this through a [`LinkHandle`] so the connection isn't lost if the stub
+    /// gets in a bad state (i.e. has a fatal error).
+    link: Mutex<Link<S>>,
     /// Initial settings applied to the debugger on [`Debugger::initialize`].
     ///
     /// After initialisation, the live values in [`V5Target`] are the source of truth and this
@@ -68,26 +89,18 @@ impl<S: Transport> V5Debugger<S> {
     /// claim a global packet buffer.
     #[must_use]
     pub fn new(stream: S) -> Self {
-        const PACKET_BUFFER_SIZE: usize = 4096;
-        // Stored as a global (in .bss) to help limit stack usage.
-        static PACKET_BUFFER: ConstStaticCell<[u8; PACKET_BUFFER_SIZE]> =
-            ConstStaticCell::new([0; PACKET_BUFFER_SIZE]);
-
-        let pkt_buffer = PACKET_BUFFER.take();
-
         let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
+        let stub_config = StubConfig::new(PACKET_BUFFER.take());
+        let link = Link::new(stream, RX_BUFFER.take(), TX_BUFFER.take());
 
         Self {
             session: Mutex::new(DebugSession {
-                stage: SessionStage::Uninitialized(
-                    GdbStubBuilder::new(stream)
-                        .with_packet_buffer(pkt_buffer)
-                        .build()
-                        .unwrap(),
-                ),
+                stage: SessionStage::NotStarted,
+                stub_config,
                 target,
                 internal_breaks: None,
             }),
+            link: Mutex::new(link),
             config: DebuggerConfig::default(),
         }
     }
@@ -112,8 +125,14 @@ impl<S: Transport> V5Debugger<S> {
 }
 
 unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
-    fn initialize(&self) {
+    fn initialize(&'static self) {
         let mut session = self.session();
+
+        // Now that we have a 'static reference to the debugger, we can save a reference to the
+        // link which we can reuse in the future if the gdbstub instance gets in a bad state and
+        // loses the one we give it initially.
+        session.stub_config.link = Some(&self.link);
+
         session.register_internal_breakpoints();
         System::initialize(&mut session.target);
         crate::sdk::competition::install_override();
@@ -124,7 +143,7 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
 
         // Start the transport session & GDB state machine now so we can start receiving Ctrl-C
         // packets, even if we haven't hit a breakpoint yet.
-        session.start();
+        session.restart();
 
         logging::debug!("Debugger initialized (config={:?})", self.config);
     }
@@ -203,6 +222,57 @@ pub enum InternalBreakpoint {
     SystemExitRequest,
 }
 
+/// The resources that a gdbstub instance needs.
+///
+/// This is kept around even after the session is initialized so a new instance can be created if
+/// the current one gets in a bad state (e.g. due to a malformed packet).
+struct StubConfig<S: 'static> {
+    /// The debugger's link.
+    ///
+    /// This is `None` until the debugger is initialized, since a `'static` reference to the
+    /// debugger (and, by extension, the Link) isn't available until it's been installed.
+    link: Option<&'static Mutex<Link<S>>>,
+    /// gdbstub's packet buffer, for building responses and decoding incoming data.
+    ///
+    /// This is a pointer because gdbstub needs an *actual* long-lived `&mut` reference to it,
+    /// which is then lost whenever a fatal error destroys the gdbstub instance - and thus we can't
+    /// use a RefCell or similar to avoid unsafe.
+    packet_buffer: NonNull<[u8]>,
+}
+
+impl<S: 'static + Transport> StubConfig<S> {
+    pub fn new(packet_buf: &'static mut [u8]) -> Self {
+        Self {
+            link: None,
+            packet_buffer: NonNull::from(packet_buf),
+        }
+    }
+
+    /// Creates a new [`GdbStub`] instance using this config.
+    ///
+    /// Calling this multiple times allows re-using the same packet buffer and link even if the
+    /// original references to them are lost by gdbstub.
+    ///
+    /// # Safety
+    ///
+    /// Any previous GdbStub built using this config must have been dropped.
+    pub unsafe fn build(&mut self) -> GdbStub<'static, V5Target, LinkHandle<S>> {
+        let link = LinkHandle::new(
+            self.link
+                .expect("debugger should be initialized before starting a session"),
+        );
+
+        // SAFETY: The packet buffer is a static and it's not being used by any other gdbstub
+        // instance.
+        let packet_buffer = unsafe { self.packet_buffer.as_mut() };
+
+        GdbStubBuilder::new(link)
+            .with_packet_buffer(packet_buffer)
+            .build()
+            .unwrap()
+    }
+}
+
 /// Handles the GDB protocol lifecycle.
 pub struct DebugSession<'a, S>
 where
@@ -211,30 +281,46 @@ where
     pub target: V5Target,
     internal_breaks: Option<[(InternalBreakpoint, u32); 1]>,
     stage: SessionStage<'a, S>,
+    stub_config: StubConfig<S>,
 }
 
-#[derive(From)]
-enum SessionStage<'a, C: Connection> {
-    /// Remote has not yet connected / been configured.
-    Uninitialized(GdbStub<'a, V5Target, C>),
+#[derive(Default)]
+enum SessionStage<'a, S: Transport> {
+    /// There's no gdbstub instance, either because the debugger hasn't been initialized yet or
+    /// because starting a session failed.
+    NotStarted,
     /// Session is running.
-    Active(GdbStubStateMachine<'a, V5Target, C>),
+    Active(GdbStubStateMachine<'a, V5Target, LinkHandle<S>>),
     /// Placeholder while transitioning between states.
+    #[default]
     Transitioning,
 }
 
-impl<S> DebugSession<'_, S>
+// SAFETY: `packet_buffer` points to a static that is only accessed by the session's gdbstub
+// instance.
+unsafe impl<S: Send> Send for StubConfig<S> {}
+
+impl<'a, S> DebugSession<'a, S>
 where
     S: Transport,
 {
-    /// Starts the GDB session if it hasn't been started yet.
-    fn start(&mut self) {
-        let stage = mem::replace(&mut self.stage, SessionStage::Transitioning);
-        self.stage = match stage {
-            SessionStage::Uninitialized(gdb) => {
-                gdb.run_state_machine(&mut self.target).unwrap().into()
+    /// Starts a new GDB session, discarding the current one (if any).
+    ///
+    /// gdbstub's protocol state (negotiated features, selected threads) is lost, so a GDB client
+    /// that was connected to the old session needs to reconnect.
+    fn restart(&mut self) {
+        // Drop the current gdbstub instance before creating a new one, since they'd share the link
+        // and the packet buffer.
+        self.stage = SessionStage::Transitioning;
+
+        // SAFETY: We've dropped the old gdbstub instance, so we can re-use these resources.
+        let gdb = unsafe { self.stub_config.build() };
+        self.stage = match gdb.run_state_machine(&mut self.target) {
+            Ok(state) => SessionStage::Active(state),
+            Err(err) => {
+                logging::error!("Failed to start a GDB session: {err}");
+                SessionStage::NotStarted
             }
-            other => other,
         };
     }
 
@@ -336,38 +422,42 @@ where
 
     /// Runs the debug console until the user indicates they want to continue program execution.
     fn run_debug_console(&mut self) {
-        let stage = mem::replace(&mut self.stage, SessionStage::Transitioning);
-        match stage {
-            SessionStage::Uninitialized(gdb) => {
-                self.stage = gdb.run_state_machine(&mut self.target).unwrap().into();
-                self.run_debug_console();
+        while self.target.monitor_status != MonitorStatus::ResumingProgram {
+            unsafe {
+                vex_sdk::vexTasksRun();
             }
-            SessionStage::Active(mut state) => {
-                while self.target.monitor_status != MonitorStatus::ResumingProgram {
-                    unsafe {
-                        vex_sdk::vexTasksRun();
+
+            match mem::take(&mut self.stage) {
+                SessionStage::Active(state) => {
+                    match Self::tick_state_machine(state, &mut self.target) {
+                        Ok(state) => self.stage = SessionStage::Active(state),
+                        Err(err) => {
+                            // gdbstub can't continue after a fatal error, so start over instead of
+                            // taking down the user's program. The program stays paused until a
+                            // GDB client reconnects.
+                            logging::error!(
+                                "Debug session ended due to an error, please reconnect: {err}"
+                            );
+                            self.restart();
+                        }
                     }
-
-                    state = Self::tick_state_machine(state, &mut self.target)
-                        .expect("debugger encountered an error");
                 }
-
-                // gdbstub doesn't flush after acknowledging a resume packet, so send the ack
-                // before the program starts running.
-                if let GdbStubStateMachine::Running(gdb) = &mut state {
-                    let _ = gdb.borrow_conn().flush();
-                }
-
-                self.stage = state.into();
+                SessionStage::NotStarted => self.restart(),
+                SessionStage::Transitioning => panic!("Cannot resume from transitioning state"),
             }
-            SessionStage::Transitioning => panic!("Cannot resume from transitioning state"),
+        }
+
+        // gdbstub doesn't flush after acknowledging a resume packet, so send the ack before the
+        // program starts running.
+        if let SessionStage::Active(GdbStubStateMachine::Running(gdb)) = &mut self.stage {
+            let _ = gdb.borrow_conn().flush();
         }
     }
 
-    fn tick_state_machine<'a>(
-        gdb: GdbStubStateMachine<'a, V5Target, S>,
+    fn tick_state_machine(
+        gdb: GdbStubStateMachine<'a, V5Target, LinkHandle<S>>,
         target: &mut V5Target,
-    ) -> Result<GdbStubStateMachine<'a, V5Target, S>, DebuggerError> {
+    ) -> Result<GdbStubStateMachine<'a, V5Target, LinkHandle<S>>, DebuggerError> {
         match gdb {
             GdbStubStateMachine::Idle(mut gdb) => {
                 if let Ok(byte) = gdb.borrow_conn().read() {
@@ -378,7 +468,7 @@ where
             }
             GdbStubStateMachine::Running(gdb) => {
                 let reported_reason = target.gdb_stop_reason();
-                logging::info!("Reporting stop to GDB: {reported_reason:x?}");
+                logging::info!("Reporting stop to client: {reported_reason:x?}");
 
                 // Once we tell GDB we've exited we should exit the monitor because the session will
                 // end.
