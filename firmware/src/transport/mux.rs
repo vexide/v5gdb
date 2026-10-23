@@ -22,6 +22,9 @@ use crate::sdk::serial::{self, Channel};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// This is used to detect whether installing the mux was actually successful.
+static MUXED_PEEK_CHAR_CALLED: AtomicBool = AtomicBool::new(false);
+
 /// Checks whether the serial mux has been enabled.
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
@@ -57,6 +60,19 @@ pub fn enable_auto_muxing() {
             user::peek_char as *const (),
         );
     }
+
+    assert!(
+        check_redirects_active(),
+        "v5gdb's StdioTransport could not be installed because some VEX SDK functions were inlined. \
+         (Please disable LTO if enabled)"
+    );
+}
+
+/// Checks whether calls to the `vexSerial*` SDK wrappers run the redirected proxies in [`user`].
+fn check_redirects_active() -> bool {
+    MUXED_PEEK_CHAR_CALLED.store(false, Ordering::Relaxed);
+    unsafe { vex_sdk::vexSerialPeekChar(u32::MAX) };
+    MUXED_PEEK_CHAR_CALLED.load(Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +193,8 @@ mod user {
     }
 
     pub extern "C" fn peek_char(channel: u32) -> i32 {
+        MUXED_PEEK_CHAR_CALLED.store(true, Ordering::Relaxed);
+
         let channel = Channel::from(channel);
         if channel == Channel::USER {
             tried_to_read();
