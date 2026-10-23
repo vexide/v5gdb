@@ -40,14 +40,16 @@ struct Config {
 };
 
 namespace detail {
-/// Applies the settings that aren't passed to the debugger directly, and
-/// converts the rest to the C representation.
-inline impl::Config apply_config(Config const& config) noexcept {
-    if (config.log_level) {
-        set_max_log_level(*config.log_level);
+    /// Applies the settings that aren't passed to the debugger directly, and
+    /// converts the rest to the C representation.
+    inline impl::Config apply_config(Config const& config) noexcept {
+        if (config.log_level) {
+            set_max_log_level(*config.log_level);
+        }
+        return impl::Config {
+            .stop_motors_on_break = config.stop_motors_on_break,
+        };
     }
-    return impl::Config {.stop_motors_on_break = config.stop_motors_on_break};
-}
 } // namespace detail
 
 /// A builtin transport that uses the V5's USB serial port to communicate with
@@ -58,7 +60,7 @@ struct StdioTransport {};
 /// GDB.
 ///
 /// Only the first call to an `install` function has an effect.
-inline void install(StdioTransport = {}, Config const& config = {}) noexcept {
+inline void install(Config const& config = {}, StdioTransport = {}) noexcept {
     impl::v5gdb_install_stdio(detail::apply_config(config));
 }
 
@@ -107,7 +109,7 @@ class Transport {
   private:
     template<class T>
         requires std::derived_from<std::remove_cvref_t<T>, Transport>
-    friend void install(T&& transport, Config const& config) noexcept;
+    friend void install(Config const& config, T&& transport) noexcept;
 
     static Transport& cast(void* data) noexcept {
         return *static_cast<Transport*>(data);
@@ -172,7 +174,7 @@ class Transport {
 /// from multiple tasks at the same time.
 template<class T>
     requires std::derived_from<std::remove_cvref_t<T>, Transport>
-void install(T&& transport, Config const& config) noexcept {
+void install(Config const& config, T&& transport) noexcept {
     // Storing this in a global gives us a constant address.
     static std::remove_cvref_t<T> stored = std::forward<T>(transport);
     impl::v5gdb_install_custom(
@@ -186,17 +188,6 @@ void install(T&& transport, Config const& config) noexcept {
         },
         detail::apply_config(config)
     );
-}
-
-/// Install the debugger with default settings, using a custom transport to
-/// communicate with GDB.
-///
-/// Only the first call to an `install` function has an effect. This function
-/// must not be called from multiple tasks at the same time.
-template<class T>
-    requires std::derived_from<std::remove_cvref_t<T>, Transport>
-void install(T&& transport) noexcept {
-    install(std::forward<T>(transport), Config {});
 }
 
 /// Returns whether a debugger has been installed and initialized.
