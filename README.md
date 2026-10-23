@@ -6,9 +6,32 @@ v5gdb is a debugger backend for the VEX V5 platform that is compatible with GDB.
 
 ## Getting Started
 
-Please read the [user manual]!
+Please read the [user manual] for detailed installation and usage instructions!
 
 [user manual]: https://github.com/vexide/v5gdb/wiki
+
+### Rust (vexide)
+
+```rust
+use v5gdb::prelude::*;
+
+#[vexide::main]
+async fn main(_peripherals: Peripherals) {
+    v5gdb::install(V5Debugger::stdio().stop_motors_on_break(true));
+}
+```
+
+### C++ (PROS)
+
+```cpp
+#include "v5gdb/v5gdb.h"
+
+void initialize() {
+    v5gdb::install(v5gdb::StdioTransport(), {.stop_motors_on_break = true});
+}
+```
+
+Connect from your computer with `v5gdb path/to/program.elf` (the ELF path is optional in PROS projects).
 
 ## Features
 

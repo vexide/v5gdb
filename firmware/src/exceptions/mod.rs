@@ -115,7 +115,7 @@ pub(crate) mod arm {
     use zynq7000::gic;
 
     use crate::{
-        DEBUGGER,
+        DEBUGGER, SchedulerAction,
         cpu::{exception::VectorBaseAddressRegister, instruction::Instruction},
         exceptions::DebugEventContext,
     };
@@ -191,13 +191,13 @@ pub(crate) mod arm {
     /// This function must be called with interrupts disabled. The implementation may re-enable them
     /// during the function call, but they will be disabled again before returning.
     ///
-    /// The callee must always resume the system scheduler after calling this function.
+    /// The callee must resume the system scheduler if this function returns true.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) -> bool {
-        let resume_scheduler = unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) };
+        let action = unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) };
         // The stack is nearly empty here so there should be enough room to report any overflow.
         check_stack_guard();
-        resume_scheduler
+        action == SchedulerAction::Resume
     }
 
     /// Minimum interval, in milliseconds, between calls to `Debugger::poll`.

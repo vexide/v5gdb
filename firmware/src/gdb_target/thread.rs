@@ -14,7 +14,9 @@ use gdbstub::{
 };
 
 use crate::{
-    exceptions::DebugEventContext, gdb_target::V5Target, sys::{DebuggerSystem, System}
+    exceptions::DebugEventContext,
+    gdb_target::V5Target,
+    sys::{DebuggerSystem, System},
 };
 
 impl MultiThreadBase for V5Target {

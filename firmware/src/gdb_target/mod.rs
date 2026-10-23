@@ -22,6 +22,7 @@ use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
+    SchedulerAction,
     cpu::{CpuMode, debug::DebugEventReason},
     exceptions::{self, DebugEventContext},
     gdb_target::{
@@ -228,9 +229,9 @@ impl V5Target {
 
     /// Deactivate the debugger and apply pending changes.
     ///
-    /// Returns whether the RTOS scheduler (if it exists) should be unpaused now that we're about to
-    /// return to user code.
-    pub fn leave_breakpoint(&mut self, ctx: &mut DebugEventContext) -> bool {
+    /// Returns what the RTOS scheduler (if it exists) should do now that we're about to return to
+    /// user code.
+    pub fn leave_breakpoint(&mut self, ctx: &mut DebugEventContext) -> SchedulerAction {
         // Write back any modifications back so the debug event handler can apply them.
         *ctx = self.exception_ctx.clone();
 
@@ -262,8 +263,10 @@ impl V5Target {
 
         if should_unpause_scheduler {
             self.scheduler_suspended_by_debugger = false;
+            SchedulerAction::Resume
+        } else {
+            SchedulerAction::StayPaused
         }
-        should_unpause_scheduler
     }
 
     /// Create a breakpoint that will stop the debugger after a single instruction has been

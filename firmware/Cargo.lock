@@ -952,7 +952,6 @@ name = "v5gdb-ffi"
 version = "0.0.1"
 dependencies = [
  "cbindgen",
- "gdbstub",
  "spin",
  "v5gdb",
  "vex-sdk",

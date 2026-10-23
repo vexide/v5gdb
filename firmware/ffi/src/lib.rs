@@ -7,10 +7,9 @@ use core::{
     ffi::{CStr, c_char, c_void},
 };
 
-use gdbstub::conn::{Connection, ConnectionExt};
 use spin::Once;
 use v5gdb::{
-    debugger::V5Debugger,
+    DebuggerConfig, V5Debugger,
     logging::LevelFilter,
     transport::{StdioTransport, Transport, TransportError},
 };
@@ -69,16 +68,8 @@ unsafe impl Send for TransportImpl {}
 
 // SAFETY: the FFI consumer is responsible for ensuring peek_byte/read_byte are
 // safe to call from an interrupt context.
-unsafe impl Transport for TransportImpl {}
-
-impl Connection for TransportImpl {
-    type Error = TransportError;
-
-    fn write(&mut self, byte: u8) -> Result<(), Self::Error> {
-        self.write_all(&[byte])
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+unsafe impl Transport for TransportImpl {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), TransportError> {
         unsafe {
             let error = (self.write_buf)(self.data, buf.as_ptr(), buf.len());
             if error.is_null() {
@@ -89,7 +80,7 @@ impl Connection for TransportImpl {
         }
     }
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
+    fn flush(&mut self) -> Result<(), TransportError> {
         unsafe {
             let error = (self.flush)(self.data);
             if error.is_null() {
@@ -100,16 +91,14 @@ impl Connection for TransportImpl {
         }
     }
 
-    fn on_session_start(&mut self) -> Result<(), Self::Error> {
+    fn on_session_start(&mut self) -> Result<(), TransportError> {
         unsafe {
             (self.session_start)(self.data);
         }
         Ok(())
     }
-}
 
-impl ConnectionExt for TransportImpl {
-    fn peek(&mut self) -> Result<Option<u8>, Self::Error> {
+    fn peek(&mut self) -> Result<Option<u8>, TransportError> {
         let result = unsafe { (self.peek_byte)(self.data) };
 
         match result {
@@ -119,7 +108,7 @@ impl ConnectionExt for TransportImpl {
         }
     }
 
-    fn read(&mut self) -> Result<u8, Self::Error> {
+    fn read(&mut self) -> Result<u8, TransportError> {
         let result = unsafe { (self.read_byte)(self.data) };
 
         match result {
@@ -131,18 +120,36 @@ impl ConnectionExt for TransportImpl {
 
 unsafe fn wrap_err(maybe_error: *const c_char) -> TransportError {
     let error = unsafe { CStr::from_ptr(maybe_error) };
-    TransportError(error.to_str().unwrap_or("<error with invalid utf8>"))
+    TransportError::new(error.to_str().unwrap_or("<error with invalid utf8>"))
+}
+
+/// Initial configuration for the debugger.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Config {
+    /// Whether all motors should be stopped immediately when a breakpoint fires.
+    pub stop_motors_on_break: bool,
+}
+
+impl From<Config> for DebuggerConfig {
+    fn from(value: Config) -> Self {
+        DebuggerConfig::new().stop_motors_on_break(value.stop_motors_on_break)
+    }
 }
 
 /// Install the debugger, communicating with GDB over the V5's USB serial port.
+///
+/// Only the first call to an `install` function has an effect.
 #[unsafe(export_name = "v5gdb_install_stdio")]
-pub extern "C" fn install_stdio() {
+pub extern "C" fn install_stdio(config: Config) {
     static DEBUGGER: Once<V5Debugger<StdioTransport>> = Once::new();
-    DEBUGGER.call_once(|| V5Debugger::new(StdioTransport::new()));
+    DEBUGGER.call_once(|| V5Debugger::stdio().with_config(config.into()));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
 }
 
 /// Install the debugger with a custom transport method for communicating with GDB.
+///
+/// Only the first call to an `install` function has an effect.
 ///
 /// # Safety
 ///
@@ -150,13 +157,19 @@ pub extern "C" fn install_stdio() {
 /// [`read_byte`](TransportImpl::read_byte) implementations must be safe to call from an interrupt
 /// context.
 #[unsafe(export_name = "v5gdb_install_custom")]
-pub unsafe extern "C" fn install_custom(transport: TransportImpl) {
+pub unsafe extern "C" fn install_custom(transport: TransportImpl, config: Config) {
     static DEBUGGER: Once<V5Debugger<TransportImpl>> = Once::new();
-    DEBUGGER.call_once(|| V5Debugger::new(transport));
+    DEBUGGER.call_once(|| V5Debugger::new(transport).with_config(config.into()));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
 }
 
-/// Manually triggers a breakpoint.
+/// Returns whether a debugger has been installed and initialized.
+#[unsafe(export_name = "v5gdb_is_installed")]
+pub extern "C" fn is_installed() -> bool {
+    v5gdb::is_installed()
+}
+
+/// Pauses the program and enters the debugger, if one is installed.
 #[unsafe(export_name = "v5gdb_breakpoint")]
 pub extern "C" fn breakpoint() {
     v5gdb::breakpoint!();

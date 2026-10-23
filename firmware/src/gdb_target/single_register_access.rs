@@ -1,8 +1,12 @@
-use gdbstub::{common::Tid, target::{
-    TargetError, TargetResult, ext::base::single_register_access::SingleRegisterAccess,
-}};
+use gdbstub::{
+    common::Tid,
+    target::{TargetError, TargetResult, ext::base::single_register_access::SingleRegisterAccess},
+};
 
-use crate::{gdb_target::{V5Target, arch::ArmRegisterID}, sys::{DebuggerSystem, System}};
+use crate::{
+    gdb_target::{V5Target, arch::ArmRegisterID},
+    sys::{DebuggerSystem, System},
+};
 
 impl SingleRegisterAccess<()> for V5Target {
     fn read_register(
