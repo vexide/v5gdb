@@ -225,6 +225,26 @@ pub(crate) mod arm {
         BYPASS_USER_IRQ.store(bypass, Ordering::Relaxed);
     }
 
+    /// GIC priority mask value that lets interrupts of every priority through.
+    pub(crate) const PERMISSIVE_PRIORITY_MASK: u8 = u8::MAX;
+
+    /// Sets the GIC's interrupt priority mask (ICCPMR) and returns the previous value.
+    ///
+    /// Only interrupts with a priority value lower than the mask are signaled to the CPU.
+    pub(crate) fn swap_priority_mask(mask: u8) -> u8 {
+        // SAFETY: Only the debugger and the RTOS modify ICCPMR, and the user's RTOS can't run while
+        // the debug monitor is active.
+        let mut gicc = unsafe { gic::CpuInterfaceRegisters::new_mmio_fixed() };
+
+        let old = gicc.read_pmr().priority();
+        gicc.write_pmr(gic::PriorityRegister::ZERO.with_priority(mask));
+        // Make sure the new mask takes effect before continuing (FreeRTOS does this too).
+        dsb();
+        isb();
+
+        old
+    }
+
     /// IRQ handler callback.
     ///
     /// This is called from `v5gdb_irq_handler` at the beginning of every IRQ exception and is

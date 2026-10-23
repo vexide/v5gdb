@@ -124,6 +124,8 @@ pub struct V5Target {
     /// Tracks whether the hardware breakpoint manager should be re-locked when exiting a
     /// breakpoint.
     original_hw_lock_state: bool,
+    /// The GIC priority mask from before the breakpoint, restored when exiting the breakpoint.
+    original_priority_mask: u8,
 
     /// If set, breakpoints are being used to single step. Report any hardware breaks as single
     /// steps instead of normal breakpoints.
@@ -155,6 +157,7 @@ impl V5Target {
             resume: ResumeActions::default(),
             interrupt_pending: false,
             original_hw_lock_state: false,
+            original_priority_mask: exceptions::PERMISSIVE_PRIORITY_MASK,
             hw_manager: HwBreakpointManager::setup(devcfg),
             stop_motors_on_break: false,
         }
@@ -165,8 +168,10 @@ impl V5Target {
         // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
         self.set_breakpoints_ignored(true);
 
-        // We re-enable interrupts after the abort (so that UART works) but prevent the RTOS from
-        // preempting us. When the debugger is active, the system should appear paused.
+        // We re-enable interrupts after the abort (so that serial works) but prevent the RTOS from
+        // preempting us - when the debugger is active, the system should appear paused. If we left
+        // interrupts off, the system timer would never tick and thus serial wouldn't be flushed
+        // when we call vexTasksRun.
 
         // If we're handling a single-step completion, the scheduler is already disabled from when
         // the step was initiated (previous debug session), so there's no need to do that again.
@@ -177,6 +182,10 @@ impl V5Target {
         // User IRQ handlers tend to mess with CPU state in ways that are incompatible with the
         // debugger, so keep them from running while paused.
         exceptions::set_user_irq_bypass(true);
+        // The program may have stopped inside a critical section that masks the interrupts we need
+        // for serial I/O, so allow all priorities while the debugger is active.
+        self.original_priority_mask =
+            exceptions::swap_priority_mask(exceptions::PERMISSIVE_PRIORITY_MASK);
         unsafe {
             aarch32_cpu::interrupt::enable();
         }
@@ -243,6 +252,7 @@ impl V5Target {
         // an awkward time to do that since an IRQ might trigger while we are in the middle of
         // restoring state - so disable IRQs entirely until we resume.
         aarch32_cpu::interrupt::disable();
+        exceptions::swap_priority_mask(self.original_priority_mask);
         // If we want to single-step or trigger an async halt we keep user IRQ handlers disabled
         // to ensure we step through main thread code rather than into an ISR.
         exceptions::set_user_irq_bypass(!resuming_to_full);
