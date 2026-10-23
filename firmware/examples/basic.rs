@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use v5gdb::{debugger::V5Debugger, logging::LevelFilter, transport::StdioTransport};
+use v5gdb::prelude::*;
 use vexide::prelude::*;
 
 #[inline(never)]
@@ -26,9 +26,7 @@ async fn main(_peripherals: Peripherals) {
     } else {
         LevelFilter::Warn
     };
-    v5gdb::logging::set_max_level(log_level);
-
-    v5gdb::install(V5Debugger::new(StdioTransport::new()));
+    v5gdb::install(V5Debugger::stdio().log_level(log_level));
 
     loop {
         let num = 40;

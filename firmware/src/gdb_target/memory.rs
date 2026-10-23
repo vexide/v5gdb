@@ -1,10 +1,8 @@
 use core::{arch::asm, ops::Range, ptr};
 
-use crate::logging;
-
-use crate::cpu::vmsa::PhysicalAccessRegister;
-
 use aarch32_cpu::register::Par;
+
+use crate::{cpu::vmsa::PhysicalAccessRegister, logging};
 
 const SECTION_SIZE: u32 = 1 << 20;
 const SECTION_MASK: u32 = !0 << 20;
@@ -50,7 +48,11 @@ pub fn write_memory(start_addr: u32, data: &[u8]) -> bool {
 /// Given a range of addresses, returns how many bytes can be written to or read from without
 /// faulting.
 pub fn test_access(mut range: Range<u32>, write: bool) -> usize {
-    logging::trace!("Testing access for {:#010x}..{:#010x} (write={write})", range.start, range.end);
+    logging::trace!(
+        "Testing access for {:#010x}..{:#010x} (write={write})",
+        range.start,
+        range.end
+    );
 
     let mut check_addr = range.start & SECTION_MASK;
     while check_addr < range.end {

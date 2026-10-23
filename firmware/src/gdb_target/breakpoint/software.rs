@@ -5,7 +5,9 @@ use crate::{
         cache::{self, CacheTarget},
         instruction::Instruction,
     },
-    gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError, memory::test_access},
+    gdb_target::{
+        V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError, memory::test_access,
+    },
     logging,
 };
 

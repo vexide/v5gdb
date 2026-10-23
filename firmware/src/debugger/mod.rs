@@ -9,21 +9,21 @@ use gdbstub::{
         state_machine::GdbStubStateMachine,
     },
 };
-use spin::{Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once};
 use static_cell::ConstStaticCell;
 use thiserror::Error;
 use vex_sdk::vexSystemExitRequest;
 use zynq7000::devcfg;
 
 use crate::{
-    Debugger,
+    Debugger, SchedulerAction,
     exceptions::DebugEventContext,
     gdb_target::{MonitorStatus, StopReason, V5Target, error::FatalError},
-    logging,
+    logging::{self, LevelFilter},
     sdk::stop_all_motors,
     sys::{DebuggerSystem, System},
     transport::{
-        Transport, TransportError,
+        StdioTransport, Transport, TransportError,
         link::{Link, LinkHandle},
     },
 };
@@ -52,10 +52,16 @@ pub enum DebuggerError {
 
 /// Initial configuration for [`V5Debugger`].
 ///
-/// Stores the debugger's default settings. These values are applied once during
-/// [`Debugger::initialize`] and have no effect if modified afterwards. All settings can be
-/// overridden at runtime from GDB using monitor commands, without restarting the program.
-#[derive(Debug, Default, Clone)]
+/// These values are applied once during [`Debugger::initialize`]. Most settings can also be changed
+/// at runtime from GDB using monitor commands.
+///
+/// ```ignore
+/// let config = DebuggerConfig::new()
+///     .stop_motors_on_break(true)
+///     .log_level(LevelFilter::Info);
+/// ```
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DebuggerConfig {
     /// Whether all motors should be stopped immediately when a breakpoint fires.
     ///
@@ -64,75 +70,157 @@ pub struct DebuggerConfig {
     ///
     /// Defaults to `false`.
     pub stop_motors_on_break: bool,
+    /// The most verbose level of debugger log messages that will be printed.
+    ///
+    /// If `None`, the level set by [`logging::set_max_level`] is left as is. Can be changed at
+    /// runtime with `monitor log <level>`.
+    ///
+    /// Defaults to `None`.
+    pub log_level: Option<LevelFilter>,
+}
+
+impl DebuggerConfig {
+    /// Creates a config with default settings.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            stop_motors_on_break: false,
+            log_level: None,
+        }
+    }
+
+    /// Sets [`stop_motors_on_break`](Self::stop_motors_on_break).
+    #[must_use]
+    pub const fn stop_motors_on_break(mut self, enabled: bool) -> Self {
+        self.stop_motors_on_break = enabled;
+        self
+    }
+
+    /// Sets [`log_level`](Self::log_level).
+    #[must_use]
+    pub const fn log_level(mut self, level: LevelFilter) -> Self {
+        self.log_level = Some(level);
+        self
+    }
+}
+
+impl Default for DebuggerConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Debugger manager.
+///
+/// Create one with [`V5Debugger::new`] and pass it to [`install`](crate::install).
 pub struct V5Debugger<S: Transport> {
-    session: Mutex<DebugSession<'static, S>>,
+    /// The transport passed to [`V5Debugger::new`].
+    ///
+    /// It's moved into [`Self::link`] when the debugger is initialized.
+    transport: Mutex<Option<S>>,
     /// The connection to GDB.
     ///
     /// gdbstub accesses this through a [`LinkHandle`] so the connection isn't lost if the stub
-    /// gets in a bad state (i.e. has a fatal error).
-    link: Mutex<Link<S>>,
+    /// gets in a bad state (i.e. has a fatal error). This is set by [`Debugger::initialize`].
+    link: Once<Mutex<Link<S>>>,
+    /// The debugger's internal state. This is set by [`Debugger::initialize`].
+    session: Once<Mutex<DebugSession<'static, S>>>,
     /// Initial settings applied to the debugger on [`Debugger::initialize`].
     ///
-    /// After initialisation, the live values in [`V5Target`] are the source of truth and this
-    /// field is no longer read. Mutating it after calling [`install`](crate::install) has no
-    /// effect.
+    /// After initialization, the live values in [`V5Target`] are the source of truth and this
+    /// field is no longer read.
     config: DebuggerConfig,
+}
+
+impl V5Debugger<StdioTransport> {
+    /// Creates a new debugger that communicates with GDB over the V5's USB serial port.
+    #[must_use]
+    pub const fn stdio() -> Self {
+        Self::new(StdioTransport::new())
+    }
 }
 
 impl<S: Transport> V5Debugger<S> {
     /// Creates a new debugger with default config.
     ///
-    /// This function can only be called once per program run because the debugger will attempt to
-    /// claim a global packet buffer.
+    /// The debugger doesn't touch any hardware or claim any global resources until it's installed.
     #[must_use]
-    pub fn new(stream: S) -> Self {
-        let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
-        let stub_config = StubConfig::new(PACKET_BUFFER.take());
-        let link = Link::new(stream, RX_BUFFER.take(), TX_BUFFER.take());
-
+    pub const fn new(transport: S) -> Self {
         Self {
-            session: Mutex::new(DebugSession {
-                stage: SessionStage::NotStarted,
-                stub_config,
-                target,
-                internal_breaks: None,
-            }),
-            link: Mutex::new(link),
-            config: DebuggerConfig::default(),
+            transport: Mutex::new(Some(transport)),
+            link: Once::new(),
+            session: Once::new(),
+            config: DebuggerConfig::new(),
         }
     }
 
-    /// Applies a [`DebuggerConfig`] to this debugger.
-    ///
-    /// Replaces any previously set configuration. Has no effect if called after
-    /// [`install`](crate::install).
+    /// Applies a [`DebuggerConfig`] to this debugger, replacing any previous configuration.
     #[must_use]
     pub fn with_config(mut self, config: DebuggerConfig) -> Self {
         self.config = config;
         self
     }
 
-    /// Returns the debugger's internal state.
+    /// Sets whether all motors should be stopped immediately when a breakpoint fires.
+    ///
+    /// See [`DebuggerConfig::stop_motors_on_break`].
     #[must_use]
-    pub fn session<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
+    pub const fn stop_motors_on_break(mut self, enabled: bool) -> Self {
+        self.config.stop_motors_on_break = enabled;
+        self
+    }
+
+    /// Sets the most verbose level of debugger log messages that will be printed.
+    ///
+    /// See [`DebuggerConfig::log_level`].
+    #[must_use]
+    pub const fn log_level(mut self, level: LevelFilter) -> Self {
+        self.config.log_level = Some(level);
+        self
+    }
+
+    /// Returns the debugger's internal state.
+    fn session(&self) -> MutexGuard<'_, DebugSession<'static, S>> {
         self.session
+            .get()
+            .expect("debugger should be initialized")
             .try_lock()
             .expect("should not recursively enter debug monitor")
     }
 }
 
-unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
+unsafe impl<S: Transport> Debugger for V5Debugger<S> {
     fn initialize(&'static self) {
-        let mut session = self.session();
+        if let Some(level) = self.config.log_level {
+            logging::set_max_level(level);
+        }
+
+        let transport = self
+            .transport
+            .lock()
+            .take()
+            .expect("debugger should only be initialized once");
 
         // Now that we have a 'static reference to the debugger, we can save a reference to the
         // link which we can reuse in the future if the gdbstub instance gets in a bad state and
         // loses the one we give it initially.
-        session.stub_config.link = Some(&self.link);
+        let link = self
+            .link
+            .call_once(|| Mutex::new(Link::new(transport, RX_BUFFER.take(), TX_BUFFER.take())));
+        let mut stub_config = StubConfig::new(PACKET_BUFFER.take());
+        stub_config.link = Some(link);
 
+        let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
+        self.session.call_once(|| {
+            Mutex::new(DebugSession {
+                stage: SessionStage::NotStarted,
+                stub_config,
+                target,
+                internal_breaks: None,
+            })
+        });
+
+        let mut session = self.session();
         session.register_internal_breakpoints();
         System::initialize(&mut session.target);
         crate::sdk::competition::install_override();
@@ -148,7 +236,7 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         logging::debug!("Debugger initialized (config={:?})", self.config);
     }
 
-    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool {
+    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> SchedulerAction {
         let mut session = self.session();
 
         let stop_reason = session.target.enter_breakpoint(ctx);
@@ -173,9 +261,10 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         // serial. Serial writes aren't IRQ-safe, and loggers tend to write to stdout (serial ch1),
         // so also avoid logging here.
 
-        // A failed try_lock means the monitor is active. In that case the serial stream carries
-        // real GDB protocol traffic so we shouldn't touch it.
-        let Some(mut session) = self.session.try_lock() else {
+        // The session doesn't exist until the debugger has been initialized. A failed try_lock
+        // means the monitor is active. In that case the serial stream carries real GDB protocol
+        // traffic so we shouldn't touch it.
+        let Some(mut session) = self.session.get().and_then(Mutex::try_lock) else {
             return;
         };
 
@@ -218,7 +307,7 @@ enum StopAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InternalBreakpoint {
+enum InternalBreakpoint {
     SystemExitRequest,
 }
 
@@ -274,11 +363,11 @@ impl<S: 'static + Transport> StubConfig<S> {
 }
 
 /// Handles the GDB protocol lifecycle.
-pub struct DebugSession<'a, S>
+struct DebugSession<'a, S>
 where
     S: Transport,
 {
-    pub target: V5Target,
+    target: V5Target,
     internal_breaks: Option<[(InternalBreakpoint, u32); 1]>,
     stage: SessionStage<'a, S>,
     stub_config: StubConfig<S>,

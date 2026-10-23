@@ -12,6 +12,13 @@ readme = "../README.md"
 homepage = "https://internals.vexide.dev/technical/debugger"
 rust-version = "1.94"
 
+[package.metadata.docs.rs]
+targets = ["thumbv7a-vex-v5"]
+cargo-args = [
+    "-Zbuild-std=std,panic_abort",
+    "-Zbuild-std-features=compiler-builtins-mem,panic-unwind",
+]
+
 # This is read by xtask to populate PROS template bundles.
 [package.metadata.pros]
 supported_kernels = "^4.2.2"

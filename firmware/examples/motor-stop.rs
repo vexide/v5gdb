@@ -43,11 +43,7 @@
 
 use std::time::Duration;
 
-use v5gdb::{
-    debugger::{DebuggerConfig, V5Debugger},
-    logging::LevelFilter,
-    transport::StdioTransport,
-};
+use v5gdb::prelude::*;
 use vex_sdk::{V5_MAX_DEVICE_PORTS, vexDeviceGetByIndex, vexDeviceMotorVoltageSet};
 use vexide::prelude::*;
 
@@ -77,15 +73,12 @@ fn motor_stop_loop(iteration: u32) -> u32 {
 
 #[vexide::main(banner(enabled = false))]
 async fn main(_peripherals: Peripherals) {
-    v5gdb::logging::set_max_level(LevelFilter::max());
-
     println!("*** v5gdb motor-stop-on-breakpoint example ***");
     println!("Motors will spin at +6 V, then stop automatically at the breakpoint.");
     println!("Connect GDB, then type 'c' to resume and watch motors restart.");
 
     // Installs the debugger with auto-motor stop enabled.
     //
-    // `DebuggerConfig` contains the debugger's initial configuration.
     // You can also enable or disable this at runtime from GDB with:
     //
     // (gdb) monitor autostop true
@@ -95,9 +88,9 @@ async fn main(_peripherals: Peripherals) {
     // (gdb) monitor autostop false
 
     v5gdb::install(
-        V5Debugger::new(StdioTransport::new()).with_config(DebuggerConfig {
-            stop_motors_on_break: true,
-        }),
+        V5Debugger::stdio()
+            .stop_motors_on_break(true)
+            .log_level(LevelFilter::max()),
     );
 
     // Spin motors so you can watch the motors running
@@ -108,7 +101,7 @@ async fn main(_peripherals: Peripherals) {
     // Breakpoint
     // the motors will stop here
     println!("Triggering breakpoint -> motors should stop **now**.");
-    v5gdb::breakpoint!();
+    breakpoint!();
     // At this point the debugger fires, `stop_all_motors()` is called inside
     // `handle_debug_event()` because `stop_motors_on_break` is equal to `true`, and then
     // the gdb console loop runs.

@@ -1,104 +1,69 @@
-#![allow(missing_docs)]
+//! GDB-compatible debugger backend for the VEX V5.
+//!
+//! Install the debugger at the start of your program:
+//!
+//! ```ignore
+//! v5gdb::install(V5Debugger::stdio());
+//! ```
+//!
+//! Then connect to the V5 Brain with the `v5gdb` CLI.
+
 #![no_std]
-#![cfg_attr(not(target_arch = "arm"), allow(unused))]
+
+#[cfg(not(target_arch = "arm"))]
+compile_error!("v5gdb only supports the `armv7a-vex-v5` and `armv7a-none-eabi` targets.");
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-use core::any::Any;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use spin::Once;
 
 use crate::exceptions::DebugEventContext;
 
+#[doc(hidden)]
 pub mod cpu;
+pub mod debugger;
+#[doc(hidden)]
 pub mod exceptions;
+#[doc(hidden)]
+pub mod gdb_target;
 pub mod logging;
+mod sdk;
 mod sys;
 pub mod transport;
 
-cfg_select! {
-    target_arch = "arm" => {
-        pub mod gdb_target;
-        mod sdk;
-        pub mod debugger;
-    }
-    _ => {
-        pub use debugger_stub as debugger;
-    }
+pub use debugger::{DebuggerConfig, V5Debugger};
+
+/// Common imports for using the debugger.
+pub mod prelude {
+    pub use crate::{
+        DebuggerConfig, V5Debugger, breakpoint, logging::LevelFilter, transport::StdioTransport,
+    };
 }
 
-#[allow(dead_code, reason = "only used on non-armv7a")]
-mod debugger_stub {
-    use crate::{Debugger, transport::Transport};
+/// The installed debugger.
+pub(crate) static DEBUGGER: Once<&dyn Debugger> = Once::new();
 
-    pub struct V5Debugger<S: Transport> {
-        _stream: spin::Mutex<S>,
-        config: DebuggerConfig,
-    }
+/// Set once the installed debugger has finished initializing.
+static READY: AtomicBool = AtomicBool::new(false);
 
-    /// Init configuration for the debugger.
-    ///
-    /// These values control the debugger's default behaviour and are applied once during
-    /// [`Debugger::initialize`]. Settings can be overridden at runtime through GDB monitor
-    /// commands after the debugger starts
-    #[derive(Debug, Default, Clone)]
-    pub struct DebuggerConfig {
-        /// Whether motors should be stopped by default when a breakpoint fires.
-        ///
-        /// When `true`, [`sdk::stop_all_motors`] is called immediately on every breakpoint before
-        /// the GDB console loop begins. This can be overridden at runtime with
-        /// `monitor autostop true` / `monitor autostop false`.
-        ///
-        /// Defaults to `false`.
-        pub stop_motors_on_break: bool,
-    }
-
-    impl<S: Transport> V5Debugger<S> {
-        /// Creates a new debugger with default configuration.
-        #[must_use]
-        pub fn new(stream: S) -> Self {
-            Self {
-                _stream: spin::Mutex::new(stream),
-                config: DebuggerConfig::default(),
-            }
-        }
-
-        /// Sets whether all motors should be automatically stopped whenever a breakpoint fires.
-        ///
-        /// This controls the *default* value of `V5Target::stop_motors_on_break`. It is applied
-        /// once at initialisation and has no effect if changed after [`install`](crate::install)
-        /// is called. Use `monitor autostop true` / `monitor autostop false` from GDB to toggle
-        /// the setting at runtime.
-        ///
-        /// Defaults to `false`.
-        #[must_use]
-        pub fn with_motor_stop(mut self, enabled: bool) -> Self {
-            self.config.stop_motors_on_break = enabled;
-            self
-        }
-    }
-
-    unsafe impl<S: Transport + Send + 'static> Debugger for V5Debugger<S> {
-        fn initialize(&'static self) {}
-
-        unsafe fn handle_debug_event(
-            &self,
-            _ctx: &mut crate::exceptions::DebugEventContext,
-        ) -> bool {
-            unimplemented!()
-        }
-    }
+/// What the system scheduler should do when the program resumes after a debug event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulerAction {
+    /// Unpause the scheduler.
+    Resume,
+    /// Keep the scheduler paused, e.g. while single-stepping a thread.
+    StayPaused,
 }
-
-pub static DEBUGGER: Once<&dyn Debugger> = Once::new();
 
 /// Debugger implementation.
 ///
 /// # Safety
 ///
 /// The debugger must not corrupt the CPU state when handling debug events.
-pub unsafe trait Debugger: Send + Sync + Any {
+pub unsafe trait Debugger: Send + Sync {
     /// Initializes the debugger.
     ///
     /// This is called once the debugger has been installed, so it can rely on `self` never moving.
@@ -109,12 +74,15 @@ pub unsafe trait Debugger: Send + Sync + Any {
     /// The function is given access to the pre-breakpoint CPU state and can view/modify it as
     /// needed.
     ///
-    /// Returns whether the system scheduler should be unpaused when returning to user code.
+    /// Returns what the system scheduler should do when returning to user code.
     ///
     /// # Safety
     ///
     /// The given fault must represent valid, saved CPU state.
-    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool;
+    ///
+    /// This function must be called with interrupts disabled. The implementation may re-enable them
+    /// during the function call, but they will be disabled again before returning.
+    unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> SchedulerAction;
 
     /// An asynchronous callback which is run from an IRQ handler every few milliseconds.
     ///
@@ -124,35 +92,80 @@ pub unsafe trait Debugger: Send + Sync + Any {
     fn poll(&self) {}
 }
 
-/// Set the current debugger.
+/// Installs the debugger.
 ///
-/// This will move the given debugger onto the heap, so it's more expensive than [`install_by_ref`].
+/// This moves the given debugger onto the heap. Without the `alloc` feature, use
+/// [`install_by_ref`] instead.
+///
+/// Only the first call to an `install` function has an effect. Later calls log a warning and
+/// otherwise do nothing.
 #[cfg(feature = "alloc")]
 pub fn install(debugger: impl Debugger + 'static) {
     use alloc::boxed::Box;
+
+    if DEBUGGER.is_completed() {
+        logging::warn!("A debugger is already installed.");
+        return;
+    }
     install_by_ref(Box::leak(Box::new(debugger)));
 }
 
-/// Set the current debugger, by reference.
+/// Installs the debugger, by reference.
+///
+/// Only the first call to an `install` function has an effect. Later calls log a warning and
+/// otherwise do nothing.
 pub fn install_by_ref(debugger: &'static dyn Debugger) {
+    let mut first = false;
+    DEBUGGER.call_once(|| {
+        first = true;
+        debugger
+    });
+    if !first {
+        logging::warn!("Installing multiple debuggers is not supported.");
+        return;
+    }
+
     logging::debug!("Installing debugger");
-    assert!(!DEBUGGER.is_completed(), "A debugger is already installed.");
-    DEBUGGER.call_once(|| debugger);
-
-    #[cfg(target_arch = "arm")]
     exceptions::install_vectors();
-
     debugger.initialize();
+    READY.store(true, Ordering::Release);
 }
 
-/// Manually trigger a breakpoint.
+/// Installs a debugger that communicates with GDB over the V5's USB serial port.
 ///
-/// This should only be run if a debugger is installed. If no debugger is installed, this will
-/// crash your program instead of pausing it.
+/// This is the same as `install(V5Debugger::stdio())`, but it doesn't require the `alloc`
+/// feature.
+pub fn install_stdio() {
+    static STDIO_DEBUGGER: V5Debugger<transport::StdioTransport> = V5Debugger::stdio();
+    install_by_ref(&STDIO_DEBUGGER);
+}
+
+/// Returns whether a debugger has been installed and initialized.
+#[must_use]
+pub fn is_installed() -> bool {
+    READY.load(Ordering::Acquire)
+}
+
+/// Pauses the program and enters the debugger, if one is installed.
+///
+/// If no debugger is installed, this does nothing. See [`breakpoint_unchecked!`] for a version that
+/// skips the check.
 #[macro_export]
 macro_rules! breakpoint {
     () => {
-        #[cfg(target_arch = "arm")]
+        if $crate::is_installed() {
+            $crate::breakpoint_unchecked!();
+        }
+    };
+}
+
+/// Pauses the program and enters the debugger.
+///
+/// This doesn't check whether a debugger is installed. If none is, this will crash your program
+/// instead of pausing it.
+#[macro_export]
+macro_rules! breakpoint_unchecked {
+    () => {
         unsafe {
             ::core::arch::asm!("bkpt", options(nostack, nomem, preserves_flags));
         }

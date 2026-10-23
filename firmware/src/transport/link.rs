@@ -358,15 +358,14 @@ impl<S: Transport> ConnectionExt for Link<S> {
     }
 }
 
-// SAFETY: The inner `try_read` is interrupt-safe.
-unsafe impl<S: Transport> Transport for Link<S> {
+impl<S: Transport> Link<S> {
     /// Reads a byte without processing it.
     ///
     /// This is only used to watch for Ctrl-C while the program is running, when GDB shouldn't be
     /// sending any packets, so the link's packet handling is skipped. Unlike
     /// [`ConnectionExt::read`], this never writes to the transport, so it's safe to call from
     /// an interrupt context.
-    fn try_read(&mut self) -> Result<Option<u8>, Self::Error> {
+    pub(crate) fn try_read(&mut self) -> Result<Option<u8>, TransportError> {
         if let Some(byte) = self.next_valid_byte() {
             return Ok(Some(byte));
         }
@@ -421,9 +420,11 @@ impl<S: Transport> ConnectionExt for LinkHandle<S> {
     }
 }
 
-// SAFETY: Forwards to `Link::try_read`, which is interrupt-safe.
-unsafe impl<S: Transport> Transport for LinkHandle<S> {
-    fn try_read(&mut self) -> Result<Option<u8>, Self::Error> {
+impl<S: Transport> LinkHandle<S> {
+    /// Reads a byte without processing it. This is safe to call from an interrupt context.
+    ///
+    /// See [`Link::try_read`].
+    pub(crate) fn try_read(&mut self) -> Result<Option<u8>, TransportError> {
         match self.0.try_lock() {
             Some(mut link) => link.try_read(),
             None => Ok(None),

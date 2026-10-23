@@ -13,6 +13,5 @@ cbindgen = "0.29.4"
 
 [dependencies]
 v5gdb = { path = "../", default-features = false }
-gdbstub.workspace = true
 spin.workspace = true
 vex-sdk.workspace = true
