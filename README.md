@@ -2,7 +2,7 @@
 
 > *"One day we will have all the features of ROBOTC on the V5 brain" - Charles, 2114V*
 
-v5gdb is a debugger backend for the VEX V5 platform that is compatible with GDB. It uses a combination of hardware and software breakpoints to implement features like line-by-line stepping and user-defined breakpoints. Users are also given the ability to read program state such as the arguments passed to the active function or global variables.
+v5gdb is a debug toolkit for VEX V5 that lets you pause your program in any function, set breakpoints and step through code, view any variable or argument, and more. You can use it to connect [GDB](https://en.wikipedia.org/wiki/GNU_Debugger) (or any other debugger that supports its protocol) to your VEX V5 robot.
 
 ## Getting Started
 
@@ -33,26 +33,72 @@ void initialize() {
 
 Connect from your computer with `v5gdb path/to/program.elf` (the ELF path is optional in PROS projects).
 
+### Installing the CLI
+
+The `v5gdb` command connects GDB (or another debugger you have installed) to a V5 brain over USB.
+
+#### Install via [Cargo Binstall](https://github.com/cargo-bins/cargo-binstall#readme)
+
+> *Supports all platforms; requires Cargo Binstall is installed*
+
+```sh
+cargo binstall v5gdb-cli
+```
+
+#### Install via [Homebrew](https://brew.sh)
+
+> *Supports macOS & Linux; requires Homebrew is installed*
+
+```sh
+brew install vexide/vexide/v5gdb
+```
+
+#### Install via shell script
+
+> *Supports macOS & Linux*
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vexide/v5gdb/releases/latest/download/v5gdb-cli-installer.sh | sh
+```
+
+#### Install via PowerShell script
+
+> *Supports Windows*
+
+```powershell
+irm https://github.com/vexide/v5gdb/releases/latest/download/v5gdb-cli-installer.ps1 | iex
+```
+
+#### Compile from source via Cargo
+
+> *Supports all platforms; requires Cargo is installed*
+
+```sh
+cargo install v5gdb-cli
+```
+
 ## Features
 
 Here are the features of v5gdb that you can use today:
 
-- Connect to your VEX V5 robot using GDB Remote Debugging
-- Easily customize how v5gdb communicates with your PC
-- Fully compatible with vexide and PROS frameworks
-- Remotely view what's stored in variables and manage dynamically-placed software/hardware breakpoints
-- Single-step through instructions and lines of code
-- Pause your program in arbitrary locations by pressing Ctrl-C
-- Simple to configure and enable via Rust and C++ APIs
-- Basic support for thread-aware debugging (requires FreeRTOS)
+| Feature | vexide | PROS |
+|---------|:------:|:----:|
+| Connect to your VEX V5 robot using GDB Remote Debugging | ✅ | ✅ |
+| Zero-configuration setup | ✅ | ✅ |
+| Set breakpoints and perform single-steps | ✅ | ✅ |
+| Remotely view variables/arguments/globals | ✅ | ✅ |
+| Pause program in arbitrary locations (Ctrl+C) | ✅ | ✅ |
+| Attach to running programs | ✅ | ✅ |
+| Works without additional hardware | ✅ | ✅ |
+| Install via Cargo package manager | ✅ | - |
+| Thread-aware debugging and FreeRTOS integration | - |  ✅ |
+| Install via PROS Conductor package manager | - |  ✅ |
 
-## Future Goals
+### Compatibility
 
-Here are the features of v5gdb that aren't done yet or are planned for the future:
+v5gdb uses the same protocol as gdbserver (GDB Remote Serial Protocol), so your favorite debugger probably already supports it. Supported debuggers include: GDB, LLDB, the C/C++ extension in VS Code, CLion, Eclipse CDT, rust-gdb, and more.
 
-- Easy to add to existing projects via a Rust crate on Crates.io and PROS template depot (for now, manually build v5gdb using the instructions in the [user manual])
-- Compatibility with VEXcode framework (right now it crashes)
-  - TBD on whether thread-aware debugging is possible for VEXcode
+By default, running the `v5gdb` command will start GDB as a subprocess, but if you'd like to connect to a different debugger (such as one listed above) you can start it in [TCP Server Mode](https://github.com/vexide/v5gdb/wiki/Command%E2%80%90line-interface#--tcp-tcp-server-mode).
 
 ## Design
 
