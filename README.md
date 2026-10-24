@@ -45,7 +45,7 @@ The `v5gdb` command connects GDB (or another debugger you have installed) to a V
 cargo binstall v5gdb-cli
 ```
 
-#### Install via [Homebrew](https://brew.sh)
+<!-- #### Install via [Homebrew](https://brew.sh)
 
 > *Supports macOS & Linux; requires Homebrew is installed*
 
@@ -67,7 +67,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vexide/v5gdb/releases/l
 
 ```powershell
 irm https://github.com/vexide/v5gdb/releases/latest/download/v5gdb-cli-installer.ps1 | iex
-```
+``` -->
 
 #### Compile from source via Cargo
 
