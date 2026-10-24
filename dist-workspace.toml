@@ -26,6 +26,8 @@ targets = [
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Releases are created as drafts (`--draft` in release.yml), so don't overwrite hand edits to CI
+allow-dirty = ["ci"]
 # Build aarch64 Linux natively so libudev doesn't need to be cross-compiled
 github-custom-runners = { aarch64-unknown-linux-gnu = "ubuntu-24.04-arm" }
 

@@ -14,6 +14,12 @@ authors = [
 [package.metadata.dist]
 formula = "v5gdb"
 
+# Attach the PROS template to each release. The zip in the release has a fixed name because dist
+# needs to know the artifact's path ahead of time.
+[[package.metadata.dist.extra-artifacts]]
+artifacts = ["../target/v5gdb-pros-template.zip"]
+build = ["cargo", "xtask", "build", "pros", "--template-out", "../target/v5gdb-pros-template.zip", "--release"]
+
 [dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.54", features = ["derive", "env"] }
