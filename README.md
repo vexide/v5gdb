@@ -33,7 +33,7 @@ void initialize() {
 
 Connect from your computer with `v5gdb path/to/program.elf` (the ELF path is optional in PROS projects).
 
-### Installing the CLI
+<!-- ### Installing the CLI
 
 The `v5gdb` command connects GDB (or another debugger you have installed) to a V5 brain over USB.
 
@@ -45,7 +45,7 @@ The `v5gdb` command connects GDB (or another debugger you have installed) to a V
 cargo binstall v5gdb-cli
 ```
 
-<!-- #### Install via [Homebrew](https://brew.sh)
+#### Install via [Homebrew](https://brew.sh)
 
 > *Supports macOS & Linux; requires Homebrew is installed*
 
@@ -67,7 +67,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/vexide/v5gdb/releases/l
 
 ```powershell
 irm https://github.com/vexide/v5gdb/releases/latest/download/v5gdb-cli-installer.ps1 | iex
-``` -->
+```
 
 #### Compile from source via Cargo
 
@@ -75,7 +75,7 @@ irm https://github.com/vexide/v5gdb/releases/latest/download/v5gdb-cli-installer
 
 ```sh
 cargo install v5gdb-cli
-```
+``` -->
 
 ## Features
 
