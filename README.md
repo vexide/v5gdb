@@ -4,6 +4,8 @@
 
 v5gdb is a debug toolkit for VEX V5 that lets you pause your program in any function, set breakpoints and step through code, view any variable or argument, and more. You can use it to connect [GDB](https://en.wikipedia.org/wiki/GNU_Debugger) (or any other debugger that supports its protocol) to your VEX V5 robot.
 
+![v5gdb running in VS Code](assets/debugging_vscode.png)
+
 ## Getting Started
 
 Please read the [user manual] for detailed installation and usage instructions!
