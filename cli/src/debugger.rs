@@ -5,7 +5,8 @@ use tokio::process::{Child, Command};
 use which::which;
 
 #[derive(Debug, Error)]
-#[error("One of the following GDB executables must be installed:\n{}", self.list())]
+#[error("v5gdb couldn't find any debuggers installed on your system.\n\
+Please install one of the following:\n{}", self.list())]
 pub struct FindDebuggerError {
     known_debuggers: Vec<&'static str>,
 }
