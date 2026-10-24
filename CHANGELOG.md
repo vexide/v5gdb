@@ -4,7 +4,47 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.1.0-alpha.3]
+## 0.1.0-beta.1
+
+### Added
+
+- C++ users may now specify a debugger config as an optional parameter to `v5gdb::install`. (#58)
+- v5gdb can now attach to running programs without a call to `breakpoint!()`. (#51)
+- v5gdb's log level may now be specified in the debugger config. (#58)
+- v5gdb can now retransmit its packets to GDB when they are lost/corrupted. (#56)
+- v5gdb will now ask GDB to retransmit its packets when they are corrupted. (#56)
+- Most fatal debugger errors will no longer panic and now only require re-connecting GDB. (#56)
+- Added `V5Debugger::stdio()` as shorthand for `V5Debugger::new(StdioTransport::new())`. (#58)
+- Added `is_installed()` to get whether the debugger is installed. (#58)
+- Added the `install_stdio()` function as shorthand for installing a `V5Debugger::stdio()`. (#58)
+- The CLI now prints a message after entering TCP Server mode.
+
+### Changed
+
+- `breakpoint!()` now does nothing instead of crashing when the debugger hasn't been installed. (#58)
+- TransportError is now opaque. (#58) (**Breaking Change**)
+- The `gdbstub` Connection/ConnectionExt traits have been merged with v5gdb's Transport trait. (#58) (**Breaking Change**)
+- `Debugger::handle_debug_event` now returns an enum instead of a bool. (#58) (**Breaking Change**)
+- `V5Debugger::new` no longer has side effects; they now happen at install-time. (#58)
+- The `Debugger` trait no longer requires the Any trait. (#58)
+- v5gdb will now check for stack overflows before resuming user code.
+- Significantly increased performance by avoiding unneeded serial packets. (#54)
+
+### Fixed
+
+- v5gdb will now panic if compiled with an unsupported LTO configuration. (#57)
+- The GIC interrupt mask is now saved and restored; this fixes stepping through PROS critical sections.
+- v5gdb should no longer overflow the debugger stack in debug builds.
+- Fixed CLI compilation on Windows.
+- Stopped the characters "d+" from sometimes being printed when v5gdb is first started.
+- Fixed prints from before v5gdb is installed not appearing consistently.
+
+### Removed
+
+- Removed stubbed implementations for non-VEXos platforms. (#58) (**Breaking Change**)
+- Certain implementation details are no longer publicly exported. (#58) (**Breaking Change**)
+
+## [0.1.0-alpha.3]
 
 ### Added
 
@@ -77,3 +117,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [0.1.0-alpha.1]: https://github.com/vexide/v5gdb/compare/160aa901a471ab20d139c07d9adc3479c8823dea...v0.1.0-alpha.1
 [0.1.0-alpha.2]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.3]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
+[0.1.0-beta.1]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.3...v0.1.0-beta.1
