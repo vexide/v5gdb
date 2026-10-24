@@ -23,13 +23,16 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 # Path that installers should place binaries in
-install-path = "CARGO_HOME"
+install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
 # Whether to install an updater program
 install-updater = false
 # Releases are created as drafts (`--draft` in release.yml), so don't overwrite hand edits to CI
 allow-dirty = ["ci"]
-# Build aarch64 Linux natively so libudev doesn't need to be cross-compiled
-github-custom-runners = { aarch64-unknown-linux-gnu = "ubuntu-24.04-arm" }
+
+# Build aarch64 targets natively so we don't have to worry about setting up cross-compilation.
+[dist.github-custom-runners]
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
+aarch64-pc-windows-msvc = "windows-11-arm"
 
 # The serialport crate links against libudev on Linux
 [dist.dependencies.apt]
