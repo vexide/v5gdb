@@ -2,6 +2,8 @@
 name = "v5gdb-cli"
 version = "0.1.0-beta.1"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
 description = "Connects GDB to the v5gdb debugger on a VEX V5 brain"
 repository = "https://github.com/vexide/v5gdb"
 homepage = "https://github.com/vexide/v5gdb"
