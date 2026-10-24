@@ -23,6 +23,9 @@ enum Args {
     /// path will be printed to the terminal.
     Build {
         target: FfiTarget,
+        /// Also copy the PROS template zip to this path.
+        #[arg(long, value_name = "PATH")]
+        template_out: Option<PathBuf>,
         #[arg(
             trailing_var_arg = true,
             allow_hyphen_values = true,
@@ -42,7 +45,11 @@ fn main() {
     let args = Args::parse();
     match args {
         Args::Test => test(),
-        Args::Build { target, extra_args } => build(target, extra_args),
+        Args::Build {
+            target,
+            template_out,
+            extra_args,
+        } => build(target, template_out, extra_args),
     }
 }
 
@@ -151,7 +158,7 @@ fn test() {
     }
 }
 
-fn build(target: FfiTarget, opts: Vec<String>) {
+fn build(target: FfiTarget, template_out: Option<PathBuf>, opts: Vec<String>) {
     let target_args: &[&str] = match target {
         FfiTarget::Pros => &[
             // Use vex-v5 instead of none-eabihf so that extern "System" functions resolve to the
@@ -202,11 +209,16 @@ fn build(target: FfiTarget, opts: Vec<String>) {
     if target == FfiTarget::Pros
         && let Some(library_path) = library_path
     {
-        make_pros_template(library_path.as_path().as_std_path());
+        let zip_path = make_pros_template(library_path.as_path().as_std_path());
+        if let Some(template_out) = template_out {
+            fs::copy(&zip_path, &template_out).unwrap();
+            println!("Copied template to: {}", template_out.display());
+        }
     }
 }
 
-fn make_pros_template(library: &Path) {
+/// Builds a PROS template zip containing the given static library and returns its path.
+fn make_pros_template(library: &Path) -> PathBuf {
     let cargo_manifest =
         fs::read(firmware_dir().join("Cargo.toml")).expect("v5gdb Cargo.toml exists");
     let cargo_manifest: Value =
@@ -281,6 +293,8 @@ fn make_pros_template(library: &Path) {
 
     println!("\nOnce registered, install it in a project with:\n");
     println!("\tpros c apply v5gdb --force-apply");
+
+    zip_path
 }
 
 fn make_pros_manifest(cargo_manifest: &Value, files: &[PathBuf]) -> Vec<u8> {
