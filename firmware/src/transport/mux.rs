@@ -25,9 +25,25 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// This is used to detect whether installing the mux was actually successful.
 static MUXED_PEEK_CHAR_CALLED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the program has tried to read from user serial since the mux was enabled.
+static PROGRAM_TRIED_TO_READ: AtomicBool = AtomicBool::new(false);
+
+/// Whether [`warn_if_program_read`] has already logged its warning.
+static READ_WARNING_LOGGED: AtomicBool = AtomicBool::new(false);
+
 /// Checks whether the serial mux has been enabled.
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
+}
+
+/// Logs a warning (once) if the program has tried to read from user serial while the mux was
+/// enabled.
+pub fn warn_if_user_read() {
+    if PROGRAM_TRIED_TO_READ.load(Ordering::Relaxed)
+        && !READ_WARNING_LOGGED.swap(true, Ordering::Relaxed)
+    {
+        crate::logging::warn!("Reading from serial while the debugger is active is unimplemented!");
+    }
 }
 
 /// Capture calls to `vexSerial*` functions and automatically add multiplexing packet framing,
@@ -144,7 +160,7 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 /// add additional framing so that serial consumers can easily differentiate debug data from
 /// standard user I/O. Currently only writes are muxed and reads are simply ignored.
 mod user {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::Ordering;
 
     use super::*;
 
@@ -173,19 +189,12 @@ mod user {
         }
     }
 
-    fn tried_to_read() {
-        static PROGRAM_TRIED_TO_READ: AtomicBool = AtomicBool::new(false);
-        if !PROGRAM_TRIED_TO_READ.swap(true, Ordering::Relaxed) {
-            crate::logging::warn!(
-                "Reading from serial while the debugger is active is unimplemented!"
-            );
-        }
-    }
-
     pub extern "C" fn read_char(channel: u32) -> i32 {
         let channel = Channel::from(channel);
         if channel == Channel::USER {
-            tried_to_read();
+            // Queue a warning for later since we might be on a small stack that can't handle
+            // logging.
+            PROGRAM_TRIED_TO_READ.store(true, Ordering::Relaxed);
             return -1;
         }
 
@@ -197,7 +206,7 @@ mod user {
 
         let channel = Channel::from(channel);
         if channel == Channel::USER {
-            tried_to_read();
+            PROGRAM_TRIED_TO_READ.store(true, Ordering::Relaxed);
             return -1;
         }
 
