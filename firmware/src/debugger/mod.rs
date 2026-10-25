@@ -25,6 +25,7 @@ use crate::{
     transport::{
         StdioTransport, Transport, TransportError,
         link::{Link, LinkHandle},
+        mux,
     },
 };
 
@@ -240,6 +241,8 @@ unsafe impl<S: Transport> Debugger for V5Debugger<S> {
         let mut session = self.session();
 
         let stop_reason = session.target.enter_breakpoint(ctx);
+
+        mux::warn_if_user_read();
 
         if session.target.stop_motors_on_break {
             logging::debug!("Auto motor-stop triggered by breakpoint");

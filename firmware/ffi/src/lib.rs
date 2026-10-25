@@ -220,7 +220,9 @@ global_asm!(
 .text
 .arm
 .weak vexTasksRun
+.type vexTasksRun, %function
 vexTasksRun:
     b vexBackgroundProcessing
+.size vexTasksRun, . - vexTasksRun
 "
 );
