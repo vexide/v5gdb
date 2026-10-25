@@ -29,7 +29,7 @@ async fn main(_peripherals: Peripherals) {
 #include "v5gdb/v5gdb.h"
 
 void initialize() {
-    v5gdb::install(v5gdb::StdioTransport(), {.stop_motors_on_break = true});
+    v5gdb::install({.stop_motors_on_break = true});
 }
 ```
 
