@@ -69,7 +69,6 @@ spin = { version = "0.12.2", default-features = false, features = [
     "spin_mutex",
 ] }
 vex-sdk = "0.29.0-rc.1"
-owo-colors = "4.3.0"
 
 [dependencies]
 arbitrary-int = "2.1.1"
@@ -79,7 +78,6 @@ spin.workspace = true
 log = "0.4.29"
 vex-sdk.workspace = true
 bytemuck = { version = "1.25.0", features = ["derive", "must_cast"] }
-owo-colors.workspace = true
 derive_more = { version = "2.1.1", features = ["from"], default-features = false }
 static_cell = { version = "2.1.0", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }

@@ -22,6 +22,7 @@ use spin::Once;
 
 use crate::exceptions::DebugEventContext;
 
+mod ansi;
 #[doc(hidden)]
 pub mod cpu;
 pub mod debugger;

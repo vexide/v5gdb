@@ -197,11 +197,11 @@ impl MonitorCmd for V5Target {
                 }
             },
             "sys" => {
-                System::handle_monitor_cmd(args, &mut out);
+                System::handle_monitor_cmd(&mut args, &mut out);
             }
             "?" | "h" | "help" => {
                 gdbstub::outputln!(out, "{MONITOR_DESCRIPTION}\n{HELP_MSG}");
-                System::handle_monitor_cmd(iter::once("help"), &mut out);
+                System::handle_monitor_cmd(&mut iter::once("help"), &mut out);
             }
             _ => {
                 gdbstub::outputln!(out, "Unknown command. See 'monitor help' for more info.");
@@ -342,6 +342,20 @@ fn battery(out: &mut ConsoleOutput<'_>) {
 
     gdbstub::outputln!(out, "voltage:     {millivolts} mV");
     gdbstub::outputln!(out, "current:     {milliamps} mA");
-    gdbstub::outputln!(out, "temperature: {temperature} \u{b0}C");
-    gdbstub::outputln!(out, "capacity:    {capacity}%");
+    gdbstub::outputln!(out, "temperature: {} \u{b0}C", OneDecimal(temperature));
+    gdbstub::outputln!(out, "capacity:    {}%", OneDecimal(capacity));
+}
+
+/// Formats a float with one decimal place.
+///
+/// This avoids core's float formatting, which helps makes PROS builds a bit smaller.
+struct OneDecimal(f64);
+
+impl core::fmt::Display for OneDecimal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let tenths = (self.0 * 10.0) as i32;
+        let sign = if tenths < 0 { "-" } else { "" };
+        let tenths = tenths.unsigned_abs();
+        write!(f, "{sign}{}.{}", tenths / 10, tenths % 10)
+    }
 }

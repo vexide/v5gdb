@@ -533,12 +533,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "owo-colors"
-version = "4.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,7 +932,6 @@ dependencies = [
  "hash32",
  "heapless",
  "log",
- "owo-colors",
  "spin",
  "static_cell",
  "thiserror",
@@ -952,6 +945,7 @@ name = "v5gdb-ffi"
 version = "0.0.1"
 dependencies = [
  "cbindgen",
+ "log",
  "spin",
  "v5gdb",
  "vex-sdk",

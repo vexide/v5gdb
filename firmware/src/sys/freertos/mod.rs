@@ -1,11 +1,11 @@
 use core::{ffi::CStr, mem::MaybeUninit, ptr};
 
 use gdbstub::{common::Tid, target::ext::monitor_cmd::ConsoleOutput};
-use owo_colors::{OwoColorize, Style};
 use spin::Mutex;
 
 use self::api::{TaskHandle_t, TaskStatus_t, UBaseType_t, eTaskState, pdFALSE};
 use crate::{
+    ansi::{BOLD, BRIGHT_BLACK, GREEN, MAGENTA, RED, RESET, YELLOW},
     cpu::ProgramStatus,
     exceptions::DebugEventContext,
     gdb_target::{V5Target, arch::ArmRegisterID, single_register_access::SavedRegister},
@@ -180,7 +180,7 @@ impl DebuggerSystem for FreeRtosSystem {
         Ok(copy_len)
     }
 
-    fn handle_monitor_cmd<'a>(mut args: impl Iterator<Item = &'a str>, out: &mut ConsoleOutput) {
+    fn handle_monitor_cmd(args: &mut dyn Iterator<Item = &str>, out: &mut ConsoleOutput) {
         let cmd = args.next().unwrap_or("?");
 
         match cmd {
@@ -209,13 +209,13 @@ impl DebuggerSystem for FreeRtosSystem {
                         unsafe { CStr::from_ptr(task.pcTaskName) }
                     };
 
-                    let state = match task.eCurrentState {
-                        eTaskState::BLOCKED => "Blocked".style(Style::new().yellow()),
-                        eTaskState::DELETED => "Deleted".style(Style::new().red()),
-                        eTaskState::READY => "Ready".style(Style::new().green()),
-                        eTaskState::RUNNING => "Running".style(Style::new().green().bold()),
-                        eTaskState::SUSPENDED => "Suspend".style(Style::new().magenta()),
-                        _ => "Unknown".style(Style::new().bright_black()),
+                    let (state, color, weight) = match task.eCurrentState {
+                        eTaskState::BLOCKED => ("Blocked", YELLOW, ""),
+                        eTaskState::DELETED => ("Deleted", RED, ""),
+                        eTaskState::READY => ("Ready", GREEN, ""),
+                        eTaskState::RUNNING => ("Running", GREEN, BOLD),
+                        eTaskState::SUSPENDED => ("Suspend", MAGENTA, ""),
+                        _ => ("Unknown", BRIGHT_BLACK, ""),
                     };
 
                     let priority = task.uxCurrentPriority;
@@ -223,7 +223,7 @@ impl DebuggerSystem for FreeRtosSystem {
 
                     gdbstub::outputln!(
                         out,
-                        "{marker} {id:<3} {name:<32} {state:<10} {priority:<10} {stack_rem:<10}",
+                        "{marker} {id:<3} {name:<32} {weight}{color}{state:<10}{RESET} {priority:<10} {stack_rem:<10}",
                         name = name.to_str().unwrap_or("<Invalid UTF-8>"),
                     );
                 }

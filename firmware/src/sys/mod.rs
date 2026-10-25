@@ -81,7 +81,7 @@ pub trait DebuggerSystem {
     ) -> Result<(), SystemError>;
 
     /// Handle an invocation of `monitor sys` by the user.
-    fn handle_monitor_cmd<'a>(_args: impl Iterator<Item = &'a str>, out: &mut ConsoleOutput) {
+    fn handle_monitor_cmd(_args: &mut dyn Iterator<Item = &str>, out: &mut ConsoleOutput) {
         gdbstub::outputln!(out, "This system doesn't support the `sys` subcommand.");
     }
 }

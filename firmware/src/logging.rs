@@ -16,7 +16,8 @@ use core::{
 };
 
 pub use log::{Level, LevelFilter};
-use owo_colors::{AnsiColors, OwoColorize};
+
+use crate::ansi::{BLUE, BOLD, BRIGHT_BLACK, MAGENTA, RED, RESET, YELLOW};
 
 static MAX_LEVEL: AtomicUsize = AtomicUsize::new(LevelFilter::Warn as usize);
 
@@ -50,16 +51,16 @@ pub fn log(level: Level, args: fmt::Arguments<'_>) {
         return;
     }
 
-    let colored_level = match level {
-        Level::Error => level.color(AnsiColors::Red),
-        Level::Warn => level.color(AnsiColors::Yellow),
-        Level::Info => level.color(AnsiColors::Blue),
-        Level::Debug => level.color(AnsiColors::Magenta),
-        Level::Trace => level.color(AnsiColors::BrightBlack),
+    let color = match level {
+        Level::Error => RED,
+        Level::Warn => YELLOW,
+        Level::Info => BLUE,
+        Level::Debug => MAGENTA,
+        Level::Trace => BRIGHT_BLACK,
     };
 
     let mut writer = BufferedSerial::new();
-    _ = writeln!(writer, "v5gdb: {}: {args}", colored_level.bold());
+    _ = writeln!(writer, "v5gdb: {BOLD}{color}{level}{RESET}: {args}");
     writer.flush();
 }
 
