@@ -4,6 +4,9 @@
 
 v5gdb is a debug toolkit for VEX V5 that lets you pause your program in any function, set breakpoints and step through code, view any variable or argument, and more. You can use it to connect [GDB](https://en.wikipedia.org/wiki/GNU_Debugger) (or any other debugger that supports its protocol) to your VEX V5 robot.
 
+v5gdb runs directly on your VEX V5 so you can debug a program in the environment where it will actually run.
+
+
 ![v5gdb running in VS Code](assets/debugging_vscode.png)
 
 ## Getting Started
@@ -81,20 +84,31 @@ cargo install v5gdb-cli
 
 ## Features
 
-Here are the features of v5gdb that you can use today:
+### Debugging
 
-| Feature | vexide | PROS |
-|---------|:------:|:----:|
-| Connect to your VEX V5 robot using GDB Remote Debugging | ✅ | ✅ |
-| Zero-configuration setup | ✅ | ✅ |
-| Set breakpoints and perform single-steps | ✅ | ✅ |
-| Remotely view variables/arguments/globals | ✅ | ✅ |
-| Pause program in arbitrary locations (Ctrl+C) | ✅ | ✅ |
-| Attach to running programs | ✅ | ✅ |
-| Works without additional hardware | ✅ | ✅ |
-| Install via Cargo package manager | ✅ | - |
-| Thread-aware debugging and FreeRTOS integration | - |  ✅ |
-| Install via PROS Conductor package manager | - |  ✅ |
+- Set breakpoints and step through your code line by line.
+- Pause the program anywhere by pressing Ctrl-C, including in infinite loops without sleeps.
+- Read and change variables, function arguments, globals, registers, and memory.
+- In PROS, each FreeRTOS task shows up as its own thread. While you step through one task, the
+  others stay paused.
+
+### Robot commands
+
+v5gdb extends GDB's `monitor` command with V5-specific tools:
+
+- `monitor stop` stops all motors. `monitor autostop true` (or `stop_motors_on_break` in your
+  code) stops all motors every time the program pauses.
+- `monitor comp` changes the competition mode your program sees (driver, autonomous, disabled),
+  so you can test competition code without a field controller.
+- `monitor devices`, `monitor battery`, and `monitor ctrl` show the status of various connected
+  devices.
+
+### Setup
+
+- No extra hardware: v5gdb uses the same USB connection you upload programs with, and your program's
+  terminal output still shows up while you debug.
+- No configuration required: add one line to your program and run `v5gdb`.
+- Available via Cargo (vexide) or PROS Conductor (PROS).
 
 ### Compatibility
 
