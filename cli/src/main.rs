@@ -1,11 +1,13 @@
-use std::{cell::LazyCell, env::current_dir, path::PathBuf, process::exit, time::Duration};
+use std::{
+    cell::LazyCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
+};
 
 use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
     net::TcpListener,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 use tracing_subscriber::EnvFilter;
 use vex_v5_serial::{
     Connection,
@@ -58,6 +60,13 @@ struct Args {
     /// raw: No extra processing is applied.
     #[clap(long, default_value = "auto", env = "V5GDB_USER_IO")]
     user_io: UserIoMode,
+    /// The debug client to use. It must accept GDB's command-line arguments. By default, v5gdb
+    /// searches for a suitable GDB executable in various locations.
+    #[clap(short, long, env = "V5GDB_CLIENT")]
+    client: Option<PathBuf>,
+    /// Extra arguments to pass to the debug client.
+    #[clap(short = 'C', long = "client-arg")]
+    client_args: Vec<OsString>,
 }
 
 #[tokio::main]
@@ -105,6 +114,12 @@ async fn main() -> anyhow::Result<()> {
 
     if args.tcp.is_some() {
         debug!("TCP mode is on: won't spawn a debugger subprocess");
+        if args.client.is_some() || !args.client_args.is_empty() {
+            warn!(
+                "--client/--client-arg was specified, but these don't do anything when --tcp is \
+            specified"
+            );
+        }
         server_task.await?;
         return Ok(());
     }
@@ -117,14 +132,20 @@ async fn main() -> anyhow::Result<()> {
         args.elf_files_to_debug.extend(project.discover_elf_files());
     }
 
-    debug!("Searching for known debuggers");
-    let debugger = Debugger::find()?;
+    let debugger = if let Some(client) = &args.client {
+        Debugger::from_user(client)?
+    } else {
+        debug!("Searching for known debuggers");
+        Debugger::find()?
+    };
     debug!(
         debugger = ?debugger,
         elf_files = ?args.elf_files_to_debug,
         "Starting up debugger subprocess"
     );
-    debugger.start(&args.elf_files_to_debug).await?;
+    debugger
+        .start(&args.elf_files_to_debug, &args.client_args)
+        .await?;
 
     Ok(())
 }
