@@ -435,9 +435,14 @@ impl HwBreakpoint for V5Target {
         addr: u32,
         kind: ArmBreakpointKind,
     ) -> TargetResult<bool, Self> {
-        let did_remove = self
-            .hw_manager
-            .remove_breakpoint_at(addr, Specificity::Match, kind);
+        // LLDB adds Thumb breakpoints with kind 2 but removes them with kind 4, so if nothing
+        // matches the requested kind, try the others too.
+        let did_remove = [kind, ArmBreakpointKind::Thumb16, ArmBreakpointKind::Arm32]
+            .into_iter()
+            .any(|kind| {
+                self.hw_manager
+                    .remove_breakpoint_at(addr, Specificity::Match, kind)
+            });
         if did_remove {
             logging::info!("Removed hardware breakpoint at {addr:#010x}");
         } else {

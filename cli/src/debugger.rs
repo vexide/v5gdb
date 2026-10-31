@@ -43,6 +43,38 @@ const GDB_STARTUP_COMMANDS: [&str; 3] = [
     "set dcache line-size 1024",
 ];
 
+/// Commands which are fed to LLDB before connecting to the V5 Brain. These mirror
+/// [`GDB_STARTUP_COMMANDS`] where LLDB has an equivalent.
+const LLDB_STARTUP_COMMANDS: [&str; 1] = [
+    // Read 1024-byte-sized chunks of memory to reduce the number of packet round trips.
+    "settings set target.process.memory-cache-line-size 1024",
+];
+
+/// Commands which are fed to LLDB after connecting to the V5 Brain.
+const LLDB_CONNECTED_COMMANDS: [&str; 1] = [
+    // LLDB has no `monitor` command, so add one that works like GDB's.
+    // ("process plugin" doesn't resolve properly until after we've connected.)
+    // This is a really verbose command, isn't it...
+    "command alias monitor process plugin packet monitor",
+];
+
+/// The command-line interface that a debug client uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebuggerKind {
+    Gdb,
+    Lldb,
+}
+
+impl DebuggerKind {
+    /// Guesses the kind of a debugger from its executable name.
+    pub fn guess_from_path(path: &Path) -> Self {
+        let is_lldb = path
+            .file_stem()
+            .is_some_and(|stem| stem.to_string_lossy().contains("lldb"));
+        if is_lldb { Self::Lldb } else { Self::Gdb }
+    }
+}
+
 #[derive(Debug, Error)]
 #[error("couldn't find the specified debugger '{}'", path.display())]
 pub struct UserDebuggerError {
@@ -53,10 +85,33 @@ pub struct UserDebuggerError {
 #[derive(Debug)]
 pub struct Debugger {
     path: PathBuf,
+    kind: DebuggerKind,
 }
 
 impl Debugger {
-    pub fn find() -> Result<Self, FindDebuggerError> {
+    pub fn find(kind: DebuggerKind) -> Result<Self, FindDebuggerError> {
+        match kind {
+            DebuggerKind::Gdb => Self::find_gdb(),
+            DebuggerKind::Lldb => Self::find_lldb(),
+        }
+    }
+
+    fn find_lldb() -> Result<Self, FindDebuggerError> {
+        const LLDB: &str = "lldb";
+
+        let Ok(resolved_lldb) = which(LLDB) else {
+            return Err(FindDebuggerError {
+                known_debuggers: vec![LLDB.to_string()],
+            });
+        };
+
+        Ok(Self {
+            path: resolved_lldb,
+            kind: DebuggerKind::Lldb,
+        })
+    }
+
+    fn find_gdb() -> Result<Self, FindDebuggerError> {
         const ARM_GDB: &str = "arm-none-eabi-gdb";
         const GENERIC_GDB_NAMES: [&str; 2] = ["gdb-multiarch", "gdb"];
 
@@ -80,46 +135,105 @@ impl Debugger {
             return Err(FindDebuggerError { known_debuggers });
         };
 
-        Ok(Self { path: resolved_gdb })
+        Ok(Self {
+            path: resolved_gdb,
+            kind: DebuggerKind::Gdb,
+        })
     }
 
     /// Uses a debugger that the user chose.
     ///
     /// `path` can be a path or the name of an executable on PATH.
-    pub fn from_user(path: &Path) -> Result<Self, UserDebuggerError> {
+    pub fn from_user(path: &Path, kind: DebuggerKind) -> Result<Self, UserDebuggerError> {
         let resolved = which(path).map_err(|source| UserDebuggerError {
             path: path.into(),
             source,
         })?;
-        Ok(Self { path: resolved })
+        Ok(Self {
+            path: resolved,
+            kind,
+        })
     }
 
     pub async fn start(&self, elf_files: &[PathBuf], extra_args: &[OsString]) -> io::Result<()> {
+        debug!(
+            debugger = ?self,
+            elf_files = ?elf_files,
+            extra_args = ?extra_args,
+            "Starting up debugger subprocess"
+        );
+
         let mut cmd = Command::new(&self.path);
         cmd.args(extra_args);
 
-        let mut elves = elf_files.iter();
-        if let Some(main_elf_file) = elves.next() {
-            cmd.arg(format!("--eval-command=file {}", main_elf_file.display()));
-        }
-        for elf_file in elves {
-            // `with confirm off` skips the "add symbol table from file" prompt.
-            cmd.arg(format!(
-                "--eval-command=with confirm off -- add-symbol-file {}",
-                elf_file.display()
-            ));
+        match self.kind {
+            DebuggerKind::Gdb => add_gdb_args(&mut cmd, elf_files),
+            DebuggerKind::Lldb => add_lldb_args(&mut cmd, elf_files),
         }
 
-        for command in GDB_STARTUP_COMMANDS {
-            cmd.arg(format!("--eval-command={command}"));
-        }
-        cmd.arg("--eval-command=target remote :35537");
-
-        let mut gdb = cmd.spawn()?;
-        wait(&mut gdb).await?;
+        let mut debugger = cmd.spawn()?;
+        wait(&mut debugger).await?;
 
         Ok(())
     }
+}
+
+/// Adds the arguments that make GDB load the given ELF files and connect to the V5 Brain.
+fn add_gdb_args(cmd: &mut Command, elf_files: &[PathBuf]) {
+    let mut elves = elf_files.iter();
+    if let Some(main_elf_file) = elves.next() {
+        cmd.arg(format!("--eval-command=file {}", main_elf_file.display()));
+    }
+    for elf_file in elves {
+        // `with confirm off` skips the "add symbol table from file" prompt.
+        cmd.arg(format!(
+            "--eval-command=with confirm off -- add-symbol-file {}",
+            elf_file.display()
+        ));
+    }
+
+    for command in GDB_STARTUP_COMMANDS {
+        cmd.arg(format!("--eval-command={command}"));
+    }
+    cmd.arg("--eval-command=target remote :35537");
+}
+
+/// Adds the arguments that make LLDB load the given ELF files and connect to the V5 Brain.
+fn add_lldb_args(cmd: &mut Command, elf_files: &[PathBuf]) {
+    // `-o` commands run in order after LLDB starts up.
+    for command in LLDB_STARTUP_COMMANDS {
+        cmd.arg("-o").arg(command);
+    }
+
+    let mut elves = elf_files.iter();
+    if let Some(main_elf_file) = elves.next() {
+        cmd.arg("-o")
+            .arg(format!("target create {}", lldb_quote(main_elf_file)));
+    }
+
+    cmd.arg("-o").arg("gdb-remote 35537");
+    for command in LLDB_CONNECTED_COMMANDS {
+        cmd.arg("-o").arg(command);
+    }
+
+    // `--slide 0` loads each extra file at the addresses in its ELF headers.
+    for elf_file in elves {
+        let elf_file = lldb_quote(elf_file);
+        cmd.arg("-o")
+            .arg(format!("target modules add {elf_file}"))
+            .arg("-o")
+            .arg(format!("target modules load --file {elf_file} --slide 0"));
+    }
+}
+
+/// Quotes a path so that LLDB's command parser treats it as a single argument.
+fn lldb_quote(path: &Path) -> String {
+    let escaped = path
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 /// Looks for `arm-none-eabi-gdb` in the toolchain named by `$PROS_TOOLCHAIN`, then in the

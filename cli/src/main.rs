@@ -1,11 +1,12 @@
 use std::{
-    cell::LazyCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
+    cell::OnceCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
 };
 
 use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
     net::TcpListener,
+    task::JoinHandle,
 };
 use tracing::{debug, error, trace, warn};
 use tracing_subscriber::EnvFilter;
@@ -15,7 +16,7 @@ use vex_v5_serial::{
 };
 
 use crate::{
-    debugger::Debugger,
+    debugger::{Debugger, DebuggerKind},
     framework::{Project, ProjectKind},
     serial::{ErrorHandler, SerialStreamError, V5SerialStream, pros::ProsDecoder},
 };
@@ -24,8 +25,29 @@ mod debugger;
 mod framework;
 mod serial;
 
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    init_logging(args.debug_io)?;
+    args.warn_if_ignored_args();
+
+    debug!("Scanning for VEX V5 devices to connect to...");
+    let mut all_devices = find_devices()?;
+    if all_devices.is_empty() {
+        error!("No V5 device is connected");
+        exit(1);
+    }
+    let device = all_devices.remove(0);
+    debug!(device = ?device, "We'll use this device");
+
+    let mut app = App::new(args, device)?;
+    app.run().await?;
+
+    Ok(())
+}
+
 /// A format which can be used to decode user serial output.
-#[derive(Debug, Clone, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum UserIoMode {
     Auto,
     Pros,
@@ -60,94 +82,146 @@ struct Args {
     /// raw: No extra processing is applied.
     #[clap(long, default_value = "auto", env = "V5GDB_USER_IO")]
     user_io: UserIoMode,
-    /// The debug client to use. It must accept GDB's command-line arguments. By default, v5gdb
-    /// searches for a suitable GDB executable in various locations.
+    /// The debug client to use. It must accept GDB's command-line arguments (or LLDB's, if
+    /// `--lldb` is specified). By default, v5gdb searches for a suitable GDB executable in various
+    /// locations.
     #[clap(short, long, env = "V5GDB_CLIENT")]
     client: Option<PathBuf>,
+    /// Use LLDB as the debug client instead of GDB. This is turned on automatically if the
+    /// `--client` executable's name contains "lldb".
+    #[clap(long)]
+    lldb: bool,
     /// Extra arguments to pass to the debug client.
     #[clap(short = 'C', long = "client-arg")]
     client_args: Vec<OsString>,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut args = Args::parse();
-    init_logging(args.debug_io)?;
-
-    let cwd = current_dir()?;
-    let project = LazyCell::new(|| {
-        debug!("Looking for a project directory");
-        Project::discover(&cwd).ok().flatten()
-    });
-
-    debug!("Scanning for VEX V5 devices to connect to...");
-    let mut all_devices = find_devices()?;
-    if all_devices.is_empty() {
-        error!("No V5 device is connected");
-        exit(1);
-    }
-    let device = all_devices.remove(0);
-    debug!(device = ?device, "We'll use this device");
-
-    if args.user_io == UserIoMode::Auto {
-        if let Some(project) = &*project
-            && project.kind() == ProjectKind::Pros
-        {
-            args.user_io = UserIoMode::Pros;
+impl Args {
+    fn debugger_kind(&self) -> DebuggerKind {
+        if self.lldb {
+            DebuggerKind::Lldb
+        } else if let Some(client) = &self.client {
+            let kind = DebuggerKind::guess_from_path(client);
+            debug!(kind = ?kind, "Inferred debugger kind from --client");
+            kind
         } else {
-            args.user_io = UserIoMode::Raw;
+            DebuggerKind::Gdb
         }
-        debug!(resolved = ?args.user_io, "Resolved 'Auto' user I/O mode");
     }
 
-    let addr = args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
-    let server = TcpListener::bind(addr).await?;
-    if args.tcp.is_some() {
-        // This allows VS Code and others to know when we're ready to connect.
-        eprintln!("Listening on {}", server.local_addr()?);
+    fn make_debugger(&self) -> anyhow::Result<Debugger> {
+        let kind = self.debugger_kind();
+        if let Some(client) = &self.client {
+            Ok(Debugger::from_user(client, kind)?)
+        } else {
+            debug!(kind = ?kind, "Searching for known debuggers");
+            Ok(Debugger::find(kind)?)
+        }
     }
-    let server_task = tokio::spawn(async move {
-        serve_device_serial(device, server, args.user_io)
-            .await
-            .unwrap()
-    });
 
-    if args.tcp.is_some() {
-        debug!("TCP mode is on: won't spawn a debugger subprocess");
-        if args.client.is_some() || !args.client_args.is_empty() {
+    fn warn_if_ignored_args(&self) {
+        if self.tcp.is_some()
+            && (self.client.is_some() || !self.client_args.is_empty() || self.lldb)
+        {
             warn!(
-                "--client/--client-arg was specified, but these don't do anything when --tcp is \
-            specified"
+                "--client/--client-arg/--lldb was specified, but these don't do anything when \
+            --tcp is specified"
             );
         }
-        server_task.await?;
-        return Ok(());
+    }
+}
+
+struct App {
+    args: Args,
+    project: OnceCell<Option<Project>>,
+    device: Option<SerialDevice>,
+    dir: PathBuf,
+}
+
+impl App {
+    fn new(args: Args, device: SerialDevice) -> anyhow::Result<Self> {
+        Ok(Self {
+            args,
+            device: Some(device),
+            project: OnceCell::new(),
+            dir: current_dir()?,
+        })
     }
 
-    if args.elf_files_to_debug.is_empty()
-        && !args.no_discover_elf
-        && let Some(project) = &*project
-    {
-        debug!("The user didn't specify any files to debug, checking the project dir");
-        args.elf_files_to_debug.extend(project.discover_elf_files());
+    fn project(&self) -> Option<&Project> {
+        self.project
+            .get_or_init(|| {
+                debug!("Looking for a project directory");
+                Project::discover(&self.dir).ok().flatten()
+            })
+            .as_ref()
     }
 
-    let debugger = if let Some(client) = &args.client {
-        Debugger::from_user(client)?
-    } else {
-        debug!("Searching for known debuggers");
-        Debugger::find()?
-    };
-    debug!(
-        debugger = ?debugger,
-        elf_files = ?args.elf_files_to_debug,
-        "Starting up debugger subprocess"
-    );
-    debugger
-        .start(&args.elf_files_to_debug, &args.client_args)
-        .await?;
+    /// Resolves any arguments that are in states like "Auto" to their real values.
+    fn resolve_args(&mut self) {
+        if self.args.user_io == UserIoMode::Auto {
+            if let Some(project) = self.project()
+                && project.kind() == ProjectKind::Pros
+            {
+                self.args.user_io = UserIoMode::Pros;
+            } else {
+                self.args.user_io = UserIoMode::Raw;
+            }
+            debug!(resolved = ?self.args.user_io, "Resolved 'Auto' user I/O mode");
+        }
+    }
 
-    Ok(())
+    fn elf_files_to_debug(&self) -> Vec<PathBuf> {
+        let mut elves = self.args.elf_files_to_debug.clone();
+        if elves.is_empty()
+            && !self.args.no_discover_elf
+            && let Some(project) = self.project()
+        {
+            debug!("The user didn't specify any files to debug, checking the project dir");
+            elves.extend(project.discover_elf_files());
+        }
+
+        elves
+    }
+
+    async fn start_tcp(&mut self) -> anyhow::Result<JoinHandle<()>> {
+        let addr = self.args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
+        let server = TcpListener::bind(addr).await?;
+
+        let device = self
+            .device
+            .take()
+            .expect("tcp server should not have already started");
+
+        if self.args.tcp.is_some() {
+            // This allows VS Code and others to know when we're ready to connect.
+            eprintln!("Listening on {}", server.local_addr()?);
+        }
+
+        let user_io = self.args.user_io;
+        Ok(tokio::spawn(async move {
+            serve_device_serial(device, server, user_io).await.unwrap()
+        }))
+    }
+
+    async fn run(&mut self) -> anyhow::Result<()> {
+        self.resolve_args();
+        let server_task = self.start_tcp().await?;
+
+        if self.args.tcp.is_some() {
+            debug!("TCP mode is on: won't spawn a debugger subprocess");
+            server_task.await?;
+            return Ok(());
+        }
+
+        let debugger = self.args.make_debugger()?;
+        let elf_files_to_debug = self.elf_files_to_debug();
+        let extra_args = &self.args.client_args;
+
+        debugger.start(&elf_files_to_debug, extra_args).await?;
+
+        Ok(())
+    }
 }
 
 /// Sets up logging to stderr.
