@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- The v5gdb CLI will now search the user's PROS toolchain when looking for suitable GDB installations.
+- Added the `-c`/`--client`/`$V5GDB_CLIENT` flag for customizing which GDB executable is used.
+- Added the `-C`/`--client-arg` flag (repeatable) for customizing what flags are passed to GDB.
+
 ## [0.1.0-beta.1]
 
 ### Added
