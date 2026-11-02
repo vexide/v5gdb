@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- The v5gdb CLI will now search the user's PROS toolchain when looking for suitable GDB installations.
+- The v5gdb CLI will now search the user's PROS toolchain when looking for suitable GDB installations. (#65)
 - Added the `-c`/`--client`/`$V5GDB_CLIENT` flag for customizing which GDB executable is used.
 - Added the `-C`/`--client-arg` flag (repeatable) for customizing what flags are passed to GDB.
 - Added the `--lldb` flag for debugging with LLDB instead of GDB. It's turned on automatically
@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Hardware breakpoints can now be removed when the client sends a different breakpoint kind than
   it used to add them. LLDB does this for Thumb breakpoints.
+
+### Changed
+
+- PROS releases are now built in Thumb mode, which decreases v5gdb's size by roughly 25%. (#64)
+- Other various binary size optimizations.
 
 ## [0.1.0-beta.1]
 
