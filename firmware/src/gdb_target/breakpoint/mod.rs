@@ -21,13 +21,23 @@ impl Breakpoints for V5Target {
 
 impl V5Target {
     /// Enable or disable the triggering of breakpoints.
+    ///
+    /// While breakpoints are ignored, both software and hardware breakpoints are removed from the
+    /// CPU. Adding or removing breakpoints only updates v5gdb's records, and the changes are
+    /// applied when breakpoints are re-enabled. This keeps code that runs while the debug monitor
+    /// is active (such as transport callbacks or VEXos tasks) from triggering a recursive debug
+    /// event, even if it switches out of Abort mode.
+    ///
+    /// # Panics
+    ///
+    /// The caller must ensure that the hardware debug registers are unlocked.
     pub fn set_breakpoints_ignored(&mut self, ignored: bool) {
         self.breaks_paused = ignored;
         for bkpt in self.breaks.iter_mut().flatten() {
             bkpt.set_enabled(!ignored);
             cache::sync_instruction(bkpt.cache_target());
         }
-        // Hardware breakpoints never trigger in abort mode.
+        self.hw_manager.set_paused(ignored);
     }
 }
 
