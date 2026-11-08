@@ -23,7 +23,7 @@
 //!
 //!   ```sh
 //!   arm-none-eabi-gdb \
-//!       target/armv7a-vex-v5/debug/examples/motor_stop \
+//!       target/thumbv7a-vex-v5/debug/examples/motor_stop \
 //!       -ex "target extended-remote | cargo v5 terminal"
 //!   ```
 //!

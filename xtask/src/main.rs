@@ -163,7 +163,7 @@ fn build(target: FfiTarget, template_out: Option<PathBuf>, opts: Vec<String>) {
         FfiTarget::Pros => &[
             // Use vex-v5 instead of none-eabihf so that extern "System" functions resolve to the
             // soft-float AAPCS ABI that VEXos uses.
-            "--target=armv7a-vex-v5",
+            "--target=thumbv7a-vex-v5",
             // Avoid building std to prevent accidentally using the wrong allocator. Rust's std
             // port will try to manage the heap, but PROS is already doing that.
             "-Zbuild-std=core",

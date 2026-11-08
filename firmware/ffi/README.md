@@ -11,8 +11,8 @@ located in the `include` directory in this folder.
 Run this from the `firmware` directory:
 
 ```sh
-cargo build -p v5gdb-ffi --target=armv7a-vex-v5 -Zbuild-std=core -Fv5gdb/pros
-ls ./target/armv7a-vex-v5/debug/libv5gdb.a
+cargo build -p v5gdb-ffi --target=thumbv7a-vex-v5 -Zbuild-std=core -Fv5gdb/pros
+ls ./target/thumbv7a-vex-v5/debug/libv5gdb.a
 ```
 
 Building with `--release`/`-r` will reduce the file size. All release builds have debug info
@@ -25,7 +25,7 @@ of the Rust configuration flags which you might find useful.
 
 * `-Z build-std=core` should be passed if you don't want to use the Rust allocator (which is likely
   if your project is written in C++).
-* `--target armv7a-vex-v5` should be passed to perform a build for VEX V5 with the hard-float ABI.
+* `--target thumbv7a-vex-v5` should be passed to perform a build for VEX V5 with the hard-float ABI.
 * `--target armv7a-none-eabi` should be passed to perform a build for VEX V5 with the soft-float
   ABI.
 

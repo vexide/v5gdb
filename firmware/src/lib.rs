@@ -11,7 +11,7 @@
 #![no_std]
 
 #[cfg(not(target_arch = "arm"))]
-compile_error!("v5gdb only supports the `armv7a-vex-v5` and `armv7a-none-eabi` targets.");
+compile_error!("v5gdb only supports the `thumbv7a-vex-v5` and `armv7a-none-eabi` targets.");
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

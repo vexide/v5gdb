@@ -1,5 +1,5 @@
 [build]
-target = "armv7a-vex-v5"
+target = "thumbv7a-vex-v5"
 
 [target.'cfg(target_os = "vexos")']
 rustflags = [
@@ -11,4 +11,4 @@ rustflags = [
 
 [unstable]
 build-std = ["std", "panic_abort"]
-build-std-features = ["compiler-builtins-mem"]
+build-std-features = ["compiler-builtins-mem", "panic-unwind"]

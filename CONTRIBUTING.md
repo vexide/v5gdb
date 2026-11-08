@@ -38,7 +38,7 @@ cargo install --path cli
 Then use it like this to connect to a robot stopped at a breakpoint:
 
 ```
-$ v5gdb ./firmware/target/armv7a-vex-v5/debug/examples/basic
+$ v5gdb ./firmware/target/thumbv7a-vex-v5/debug/examples/basic
 GNU gdb (GDB) 16.3
 (gdb)
 ```

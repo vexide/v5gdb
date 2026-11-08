@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //! 1. Start the program.
-//! 2. Connect with `v5gdb target/armv7a-vex-v5/debug/examples/spin`
+//! 2. Connect with `v5gdb target/thumbv7a-vex-v5/debug/examples/spin`
 //! 3. In GDB: `continue`, then press Ctrl-C.
 //!
 //! GDB should report that the program received a SIGINT and enter the debug monitor.
