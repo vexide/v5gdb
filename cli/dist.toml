@@ -1,0 +1,13 @@
+[package]
+# This is used for the Homebrew publish job, which needs an explicit homepage.
+# It can't be specified in Cargo.toml because Cargo would warn that it's the same as the repo URL.
+homepage = "https://github.com/vexide/v5gdb"
+
+[dist]
+formula = "v5gdb"
+
+# Attach the PROS template to each release. The zip in the release has a fixed name because dist
+# needs to know the artifact's path ahead of time.
+[[dist.extra-artifacts]]
+artifacts = ["../target/v5gdb-pros-template.zip"]
+build = ["cargo", "xtask", "build", "pros", "--template-out", "../target/v5gdb-pros-template.zip", "--release"]
