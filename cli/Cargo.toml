@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 readme = "../README.md"
 description = "Connects GDB to the v5gdb debugger on a VEX V5 brain"
 repository = "https://github.com/vexide/v5gdb"
-homepage = "https://github.com/vexide/v5gdb"
 categories = ["command-line-utilities", "development-tools::debugging", "embedded"]
 keywords = ["vex-v5", "debugger", "gdb", "vexide", "PROS"]
 authors = [

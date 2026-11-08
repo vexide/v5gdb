@@ -9,7 +9,6 @@ categories = ["development-tools::debugging", "embedded", "hardware-support"]
 keywords = ["vex-v5", "gdb", "debugging", "vexide"]
 repository = "https://github.com/vexide/v5gdb"
 readme = "../README.md"
-homepage = "https://internals.vexide.dev/technical/debugger"
 rust-version = "1.94"
 
 [package.metadata.docs.rs]
