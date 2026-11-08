@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Hardware breakpoints can now be removed when the client sends a different breakpoint kind than
   it used to add them. LLDB does this for Thumb breakpoints.
+- Hardware breakpoints are now disabled while the debugger is paused. Before, a breakpoint could
+  trigger again from inside the debugger when code it called (such as a custom transport) left
+  Abort mode, which panicked with "should not recursively enter debug monitor". (#32)
 
 ### Changed
 

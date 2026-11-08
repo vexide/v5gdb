@@ -24,10 +24,23 @@ pub struct HardwareCapabilities {
     pub num_watchpoints: u8,
 }
 
+/// The desired configuration of one hardware breakpoint slot.
+#[derive(Debug, Clone, Copy)]
+struct HwSlot {
+    value: u32,
+    ctrl: BreakpointControl,
+}
+
 pub struct HwBreakpointManager {
     capabilities: HardwareCapabilities,
     mmio: MmioDebugLogic<'static>,
-    used_breakpoints: [bool; 16],
+    /// The list of hardware breakpoints currently configured.
+    ///
+    /// This is the source of truth for which breakpoints exist. The debug registers mirror it
+    /// unless the manager is paused, in which case every breakpoint is disabled.
+    slots: [Option<HwSlot>; 16],
+    /// Whether breakpoints are currently temporarily disabled in hardware.
+    paused: bool,
 }
 
 impl HwBreakpointManager {
@@ -101,7 +114,8 @@ impl HwBreakpointManager {
                 num_watchpoints,
             },
             mmio: unsafe { DebugLogic::new_mmio_at(mmio_base) },
-            used_breakpoints: [false; _],
+            slots: [None; _],
+            paused: false,
         };
 
         manager.set_locked(false);
@@ -129,7 +143,7 @@ impl HwBreakpointManager {
                 .write_breakpoint_value(idx.into(), RESET_SENTINEL)
                 .unwrap();
         }
-        self.used_breakpoints = [false; 16];
+        self.slots = [None; 16];
 
         for idx in 0..self.capabilities.num_watchpoints {
             self.mmio
@@ -175,62 +189,53 @@ impl HwBreakpointManager {
         assert!(!self.locked(), "Debug registers must be unlocked");
 
         let (new_word, new_bas) = split_addr(addr, kind)?;
+        let new_type: BreakpointType = specificity.into();
 
-        let mut next_disabled_idx = None;
+        let num_breakpoints = self.capabilities.num_breakpoints as usize;
+        let mut free_idx = None;
 
-        // Check for duplicate breakpoint.
-        for idx in 0..self.capabilities.num_breakpoints {
-            let existing_bkpt = self.mmio.read_breakpoint_ctrl(idx as usize).unwrap();
-            let existing_word = self.mmio.read_breakpoint_value(idx as usize).unwrap();
-
-            // Look for breakpoints that are both paused (!enabled) and not in use.
-            // Breakpoints
-            if !existing_bkpt.enabled()
-                && !self.used_breakpoints[idx as usize]
-                && next_disabled_idx.is_none()
-            {
-                next_disabled_idx = Some(idx as usize);
-            }
-
-            if existing_bkpt.enabled()
-                && existing_bkpt.breakpoint_type() == Ok(specificity.into())
-                && new_word == existing_word
-                && existing_bkpt.byte_address_select() == new_bas
-            {
-                return Err(BreakpointError::AlreadyExists);
+        for (idx, slot) in self.slots[..num_breakpoints].iter().enumerate() {
+            match slot {
+                // We intentionally don't break here to make sure we've checked all slots for
+                // duplicates.
+                None if free_idx.is_none() => free_idx = Some(idx),
+                Some(slot)
+                    if slot.ctrl.breakpoint_type() == Ok(new_type)
+                        && slot.value == new_word
+                        && slot.ctrl.byte_address_select() == new_bas =>
+                {
+                    return Err(BreakpointError::AlreadyExists);
+                }
+                _ => {}
             }
         }
 
-        // No duplicates, so now we insert a new breakpoint.
-        let Some(bkpt_index) = next_disabled_idx else {
+        let Some(bkpt_index) = free_idx else {
             return Err(BreakpointError::NoSpace);
         };
 
         // We set the breakpoint value to the 4-byte word containing the address because breakpoints
         // look at regions 4 bytes large and must be aligned as such.
-        self.mmio
-            .write_breakpoint_value(bkpt_index, new_word)
-            .unwrap();
+        let ctrl = BreakpointControl::DISABLED
+            .with_enabled(true)
+            .with_byte_address_select(new_bas)
+            // No mask, match exact address
+            .with_address_range_mask(u5::new(0b00000))
+            // No linked Context ID breakpoint
+            .with_linked_breakpoint_index(u4::new(0))
+            .with_breakpoint_type(new_type)
+            // Don't trigger inside abort mode, and "step over" IRQs
+            .with_privileged_mode_ctrl(PrivilegeModeFilter::UserSystemSupervisorOnly)
+            .with_security_state_ctrl(SecurityFilter::All);
 
-        self.mmio
-            .modify_breakpoint_ctrl(bkpt_index, |bkpt| {
-                bkpt.with_enabled(true)
-                    .with_byte_address_select(new_bas)
-                    // No mask, match exact address
-                    .with_address_range_mask(u5::new(0b00000))
-                    // No linked Context ID breakpoint
-                    .with_linked_breakpoint_index(u4::new(0))
-                    .with_breakpoint_type(specificity.into())
-                    // Don't trigger inside abort mode, and "step over" IRQs
-                    .with_privileged_mode_ctrl(PrivilegeModeFilter::UserSystemSupervisorOnly)
-                    .with_security_state_ctrl(SecurityFilter::All)
-            })
-            .unwrap();
+        self.slots[bkpt_index] = Some(HwSlot {
+            value: new_word,
+            ctrl,
+        });
+        self.sync_slot(bkpt_index);
 
         aarch32_cpu::asm::dsb();
         aarch32_cpu::asm::isb();
-
-        self.used_breakpoints[bkpt_index] = true;
 
         Ok(())
     }
@@ -249,33 +254,24 @@ impl HwBreakpointManager {
         let Ok((search_word, byte_address_select)) = split_addr(addr, kind) else {
             return false;
         };
+        let search_type = BreakpointType::from(specificity);
 
         let mut anything_removed = false;
-        for bkpt_index in 0..self.capabilities.num_breakpoints {
-            // First, is this breakpoint referring to the target address and enabled?
-            let bkpt = self.mmio.read_breakpoint_ctrl(bkpt_index as usize).unwrap();
-            let is_enabled_and_cfged = bkpt.enabled()
-                && bkpt.breakpoint_type() == Ok(specificity.into())
-                && bkpt.byte_address_select() == byte_address_select;
-            if !is_enabled_and_cfged {
+        for bkpt_index in 0..self.capabilities.num_breakpoints as usize {
+            let Some(slot) = self.slots[bkpt_index] else {
+                continue;
+            };
+
+            if slot.ctrl.breakpoint_type() != Ok(search_type)
+                || slot.ctrl.byte_address_select() != byte_address_select
+                || slot.value != search_word
+            {
                 continue;
             }
 
-            let bkpt_word = self
-                .mmio
-                .read_breakpoint_value(bkpt_index as usize)
-                .unwrap();
-            if bkpt_word != search_word {
-                continue;
-            }
-
-            // It is, so remove it.
-            self.mmio
-                .write_breakpoint_ctrl(bkpt_index as usize, bkpt.with_enabled(false))
-                .unwrap();
-
+            self.slots[bkpt_index] = None;
+            self.sync_slot(bkpt_index);
             anything_removed = true;
-            self.used_breakpoints[bkpt_index as usize] = false;
         }
 
         aarch32_cpu::asm::dsb();
@@ -284,9 +280,58 @@ impl HwBreakpointManager {
         anything_removed
     }
 
+    /// Returns whether breakpoints are being kept out of the debug registers.
+    #[must_use]
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pauses or resumes all hardware breakpoints.
+    ///
+    /// While paused, every breakpoint is disabled in the debug registers, so none of them can
+    /// trigger no matter which CPU mode is running. Breakpoints can still be added and removed, and
+    /// they take effect when the breakpoint manager is unpaused.
+    pub fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+        self.paused = paused;
+
+        for idx in 0..self.capabilities.num_breakpoints as usize {
+            self.sync_slot(idx);
+        }
+
+        aarch32_cpu::asm::dsb();
+        aarch32_cpu::asm::isb();
+    }
+
+    /// Writes the desired state of a breakpoint slot to the debug registers.
+    ///
+    /// The caller must issue the barriers needed to make the change take effect.
+    fn sync_slot(&mut self, idx: usize) {
+        assert!(!self.locked(), "Debug registers must be unlocked");
+
+        match self.slots[idx] {
+            Some(slot) if !self.paused => {
+                // Disable the slot first to avoid hitting a half-written breakpoint.
+                self.mmio
+                    .write_breakpoint_ctrl(idx, BreakpointControl::DISABLED)
+                    .unwrap();
+                self.mmio.write_breakpoint_value(idx, slot.value).unwrap();
+                self.mmio.write_breakpoint_ctrl(idx, slot.ctrl).unwrap();
+            }
+            _ => {
+                self.mmio
+                    .write_breakpoint_ctrl(idx, BreakpointControl::DISABLED)
+                    .unwrap();
+            }
+        }
+    }
+
+    /// Returns the number of hardware breakpoints that aren't being used.
     #[must_use]
     pub fn breakpoints_available(&self) -> u8 {
-        let breaks_used = self.used_breakpoints.iter().filter(|&&e| e).count() as u8;
+        let breaks_used = self.slots.iter().filter(|slot| slot.is_some()).count() as u8;
         let total_breaks = self.capabilities.num_breakpoints;
 
         total_breaks - breaks_used
@@ -354,7 +399,11 @@ impl Debug for HwBreakpointManager {
         f.debug_struct("HwBreakpointManager")
             .field("locked", &self.locked())
             .field("capabilities", &self.capabilities)
-            .field("used_breakpoints", &self.used_breakpoints)
+            .field("paused", &self.paused)
+            .field(
+                "slots",
+                &&self.slots[..self.capabilities.num_breakpoints as usize],
+            )
             .field("mmio_ptr", &unsafe { self.mmio.ptr() })
             .field(
                 "bkpt_values",

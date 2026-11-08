@@ -166,7 +166,9 @@ impl V5Target {
 
     /// Activate the debugger after a breakpoint is triggered.
     pub fn enter_breakpoint(&mut self, ctx: &mut DebugEventContext) -> StopReason {
-        // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
+        // Pause breakpoints before allowing unpredictable control flow (by interrupts).
+        self.original_hw_lock_state = self.hw_manager.locked();
+        self.hw_manager.set_locked(false);
         self.set_breakpoints_ignored(true);
 
         // We re-enable interrupts after the abort (so that serial works) but prevent the RTOS from
@@ -205,9 +207,6 @@ impl V5Target {
             }
             logging::warn!("Your program has been paused. Please connect a debugger.");
         });
-
-        self.original_hw_lock_state = self.hw_manager.locked();
-        self.hw_manager.set_locked(false);
 
         self.exception_ctx = ctx.clone();
         self.monitor_status = MonitorStatus::Active;
@@ -258,8 +257,8 @@ impl V5Target {
         // to ensure we step through main thread code rather than into an ISR.
         exceptions::set_user_irq_bypass(!resuming_to_full);
 
-        self.hw_manager.set_locked(self.original_hw_lock_state);
         self.set_breakpoints_ignored(false);
+        self.hw_manager.set_locked(self.original_hw_lock_state);
 
         if should_unpause_scheduler {
             self.scheduler_suspended_by_debugger = false;
