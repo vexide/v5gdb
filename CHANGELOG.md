@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+## [0.1.0-beta.2]
+
 ### Added
 
 - The v5gdb CLI will now search the user's PROS toolchain when looking for suitable GDB installations. (#65)
@@ -141,3 +143,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [0.1.0-alpha.2]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.3]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-beta.1]: https://github.com/vexide/v5gdb/compare/v0.1.0-alpha.3...v0.1.0-beta.1
+[0.1.0-beta.2]: https://github.com/vexide/v5gdb/compare/v0.1.0-beta.1...v0.1.0-beta.2
