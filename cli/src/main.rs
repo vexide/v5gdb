@@ -60,6 +60,7 @@ enum UserIoMode {
 /// already stopped at a breakpoint. Use the V5GDB_LOG environment variable to enable internal CLI
 /// logging. On-device logging can be controlled using GDB monitor commands.
 #[derive(Debug, clap::Parser)]
+#[command(name = "v5gdb", version, author)]
 struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
     #[clap(long)]
