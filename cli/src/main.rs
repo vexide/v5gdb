@@ -2,7 +2,7 @@ use std::{
     cell::OnceCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
 };
 
-use clap::Parser;
+use clap::{Parser, builder::styling};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
     net::TcpListener,
@@ -54,13 +54,19 @@ enum UserIoMode {
     Raw,
 }
 
+pub const STYLES: styling::Styles = styling::Styles::styled()
+    .header(styling::AnsiColor::Green.on_default().bold())
+    .usage(styling::AnsiColor::Green.on_default().bold())
+    .literal(styling::AnsiColor::Blue.on_default().bold())
+    .placeholder(styling::AnsiColor::Cyan.on_default());
+
 /// Use GDB to debug a VEX V5 robot running the v5gdb debug server.
 ///
 /// This command interrupts the program on connect, so it can attach to robots that are running or
 /// already stopped at a breakpoint. Use the V5GDB_LOG environment variable to enable internal CLI
 /// logging. On-device logging can be controlled using GDB monitor commands.
 #[derive(Debug, clap::Parser)]
-#[command(name = "v5gdb", version, author)]
+#[command(name = "v5gdb", version, author, styles(STYLES))]
 struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
     #[clap(long)]
