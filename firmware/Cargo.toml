@@ -20,7 +20,7 @@ cargo-args = [
 
 # This is read by xtask to populate PROS template bundles.
 [package.metadata.pros]
-supported_kernels = "^4.2.2"
+supported_kernels = "^4.2.3"
 target = "v5"
 metadata = {}
 
