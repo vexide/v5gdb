@@ -2,10 +2,7 @@ use std::{borrow::Cow, io, mem};
 
 use cobs::{CobsDecoderOwned, DecodeError};
 use thiserror::Error;
-use tokio::{
-    io::{AsyncWrite, AsyncWriteExt, Stderr, stderr},
-    net::TcpStream,
-};
+use tokio::io::{AsyncWrite, AsyncWriteExt, Stderr, stderr};
 use tracing::trace;
 use vex_v5_serial::{
     Connection,
@@ -30,9 +27,13 @@ pub enum SerialStreamError<'a> {
     Serial(#[from] SerialError),
 }
 
-pub struct V5SerialStream<U> {
+/// Demultiplexes v5gdb's serial stream.
+///
+/// User output is written to `U`, debugger logs to stderr, and debugger packets to `C` (the GDB
+/// client).
+pub struct V5SerialStream<U, C> {
     pub device: SerialConnection,
-    pub client: TcpStream,
+    pub client: C,
     decoder: CobsDecoderOwned,
     /// The raw bytes of the frame currently being decoded, excluding delimiters.
     raw_frame: Vec<u8>,
@@ -43,10 +44,10 @@ pub struct V5SerialStream<U> {
 
 pub type ErrorHandler = Box<dyn FnMut(SerialStreamError<'_>) + Send>;
 
-impl<U: AsyncWrite + Unpin> V5SerialStream<U> {
+impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
     pub fn new(
         device: SerialConnection,
-        client: TcpStream,
+        client: C,
         user_out: U,
         error_handler: ErrorHandler,
     ) -> Self {

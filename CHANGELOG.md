@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Added
+
+- Added the `-t`/`--terminal` flag, which shows the program's output and v5gdb's logs without
+  starting a debugger or interrupting the program.
+
 ## [0.1.0-beta.2]
 
 ### Added

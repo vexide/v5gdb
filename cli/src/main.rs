@@ -24,6 +24,7 @@ use crate::{
 mod debugger;
 mod framework;
 mod serial;
+mod terminal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -71,6 +72,15 @@ struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
     #[clap(long)]
     tcp: Option<String>,
+    /// Only show the program's output and v5gdb's logs, without starting a debugger.
+    ///
+    /// Unlike the debugger modes, this does not interrupt the program when it connects.
+    #[clap(
+        short,
+        long,
+        conflicts_with_all = ["tcp", "elf_files_to_debug", "client", "lldb", "client_args"],
+    )]
+    terminal: bool,
     /// List of ELF files to debug with GDB (has no effect in TCP mode).
     elf_files_to_debug: Vec<PathBuf>,
     /// Logs all decoding errors and serial I/O (same as adding `v5gdb::serial=trace` to
@@ -213,6 +223,15 @@ impl App {
 
     async fn run(&mut self) -> anyhow::Result<()> {
         self.resolve_args();
+
+        if self.args.terminal {
+            let device = self
+                .device
+                .take()
+                .expect("device should not have been used yet");
+            return terminal::run(device, self.args.user_io).await;
+        }
+
         let server_task = self.start_tcp().await?;
 
         if self.args.tcp.is_some() {
@@ -251,6 +270,31 @@ fn init_logging(debug_io: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn make_error_handler() -> ErrorHandler {
+    Box::new(move |err| match err {
+        SerialStreamError::Serial(err) => error!("Device disconnected: {err}"),
+        SerialStreamError::PacketParse { source, raw_frame } => {
+            trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "unknown frame");
+        }
+        SerialStreamError::CobsDecode { source, raw_frame } => {
+            trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "invalid COBS frame");
+        }
+    })
+}
+
+/// Wraps `out` in a decoder for the given user I/O format.
+fn make_user_out<W: AsyncWrite + Unpin + Send + 'static>(
+    out: W,
+    user_io: UserIoMode,
+) -> Box<dyn AsyncWrite + Unpin + Send> {
+    debug!(mode = ?user_io, "Setting up user I/O decoder");
+    match user_io {
+        UserIoMode::Auto => unreachable!(),
+        UserIoMode::Pros => Box::new(ProsDecoder::new(out)),
+        UserIoMode::Raw => Box::new(out),
+    }
+}
+
 async fn serve_device_serial(
     device: SerialDevice,
     server: TcpListener,
@@ -266,26 +310,9 @@ async fn serve_device_serial(
     let mut program_output = [0; 2048];
     let mut program_input = [0; 4096];
 
-    let error_handler: ErrorHandler = Box::new(move |err| match err {
-        SerialStreamError::Serial(err) => error!("Device disconnected: {err}"),
-        SerialStreamError::PacketParse { source, raw_frame } => {
-            trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "unknown frame");
-        }
-        SerialStreamError::CobsDecode { source, raw_frame } => {
-            trace!(%source, raw_frame = ?String::from_utf8_lossy(&raw_frame), "invalid COBS frame");
-        }
-    });
-
-    let user_out = stderr();
-    debug!(mode = ?user_io, "Setting up user I/O decoder");
-    let user_out: Box<dyn AsyncWrite + Unpin + Send> = match user_io {
-        UserIoMode::Auto => unreachable!(),
-        UserIoMode::Pros => Box::new(ProsDecoder::new(user_out)),
-        UserIoMode::Raw => Box::new(user_out),
-    };
-
+    let user_out = make_user_out(stderr(), user_io);
     let (client, _addr) = server.accept().await?;
-    let mut stream = V5SerialStream::new(dev_conn, client, user_out, error_handler);
+    let mut stream = V5SerialStream::new(dev_conn, client, user_out, make_error_handler());
 
     loop {
         tokio::select! {
