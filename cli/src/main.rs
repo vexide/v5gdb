@@ -2,6 +2,7 @@ use std::{
     cell::OnceCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
 };
 
+use anyhow::Context;
 use clap::{Parser, builder::styling};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
@@ -12,7 +13,7 @@ use tracing::{debug, error, trace, warn};
 use tracing_subscriber::EnvFilter;
 use vex_v5_serial::{
     Connection,
-    serial::{SerialDevice, find_devices},
+    serial::{SerialConnection, SerialDevice, find_devices},
 };
 
 use crate::{
@@ -202,13 +203,16 @@ impl App {
     }
 
     async fn start_tcp(&mut self) -> anyhow::Result<JoinHandle<()>> {
-        let addr = self.args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
-        let server = TcpListener::bind(addr).await?;
-
         let device = self
             .device
             .take()
             .expect("tcp server should not have already started");
+        // Open the device before listening so that errors (e.g. another program using the serial
+        // port) are reported before anything tries to connect.
+        let dev_conn = connect_device(&device)?;
+
+        let addr = self.args.tcp.as_deref().unwrap_or("127.0.0.1:35537");
+        let server = TcpListener::bind(addr).await?;
 
         if self.args.tcp.is_some() {
             // This allows VS Code and others to know when we're ready to connect.
@@ -217,7 +221,9 @@ impl App {
 
         let user_io = self.args.user_io;
         Ok(tokio::spawn(async move {
-            serve_device_serial(device, server, user_io).await.unwrap()
+            if let Err(err) = serve_device_serial(dev_conn, server, user_io).await {
+                error!("{err:#}");
+            }
         }))
     }
 
@@ -295,13 +301,18 @@ fn make_user_out<W: AsyncWrite + Unpin + Send + 'static>(
     }
 }
 
+/// Opens a connection to the V5's serial port.
+fn connect_device(device: &SerialDevice) -> anyhow::Result<SerialConnection> {
+    device
+        .connect(Duration::from_secs(5))
+        .context("Failed to open the V5's serial port (another program may be using it)")
+}
+
 async fn serve_device_serial(
-    device: SerialDevice,
+    mut dev_conn: SerialConnection,
     server: TcpListener,
     user_io: UserIoMode,
 ) -> anyhow::Result<()> {
-    let mut dev_conn = device.connect(Duration::from_secs(5))?;
-
     // Pause the program in case it's running so that GDB can attach to it.
     const CTRL_C: u8 = 0x03;
     debug!("Sending interrupt to device");
