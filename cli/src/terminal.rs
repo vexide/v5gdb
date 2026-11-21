@@ -1,7 +1,7 @@
 //! Terminal mode (`--terminal`), which connects the program's I/O to the terminal without starting
 //! a debugger.
 
-use tokio::io::{sink, stdout};
+use tokio::io::{Sink, stdout};
 use tracing::error;
 use vex_v5_serial::{Connection, serial::SerialDevice};
 
@@ -17,7 +17,7 @@ use crate::{
 pub async fn run(device: SerialDevice, user_io: UserIoMode) -> anyhow::Result<()> {
     let dev_conn = connect_device(&device)?;
     let user_out = make_user_out(stdout(), user_io);
-    let mut stream = V5SerialStream::new(dev_conn, sink(), user_out, make_error_handler());
+    let mut stream = V5SerialStream::new(dev_conn, None::<Sink>, user_out, make_error_handler());
     let mut input = UserInput::stdin();
 
     let mut program_output = [0; 2048];

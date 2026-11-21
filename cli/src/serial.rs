@@ -30,10 +30,10 @@ pub enum SerialStreamError<'a> {
 /// Demultiplexes v5gdb's serial stream.
 ///
 /// User output is written to `U`, debugger logs to stderr, and debugger packets to `C` (the GDB
-/// client).
+/// client). Debugger packets are dropped while there is no client.
 pub struct V5SerialStream<U, C> {
     pub device: SerialConnection,
-    pub client: C,
+    pub client: Option<C>,
     decoder: CobsDecoderOwned,
     /// The raw bytes of the frame currently being decoded, excluding delimiters.
     raw_frame: Vec<u8>,
@@ -47,7 +47,7 @@ pub type ErrorHandler = Box<dyn FnMut(SerialStreamError<'_>) + Send>;
 impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
     pub fn new(
         device: SerialConnection,
-        client: C,
+        client: Option<C>,
         user_out: U,
         error_handler: ErrorHandler,
     ) -> Self {
@@ -133,8 +133,12 @@ impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
                 self.debug_out.write_all(packet.body).await?;
             }
             Channel::Debugger => {
-                trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> gdb");
-                self.client.write_all(packet.body).await?;
+                if let Some(client) = &mut self.client {
+                    trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> gdb");
+                    client.write_all(packet.body).await?;
+                } else {
+                    trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> (dropped)");
+                }
             }
         }
 

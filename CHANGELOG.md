@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Breaking:** the CLI now sends COBS-framed packets to the device (the same format the device
   already used for its output). Older CLIs won't be able to talk to this version of the debugger.
+- In `--tcp` mode, the program's output and input are forwarded as soon as the CLI starts, and the
+  program is only interrupted once GDB connects. Before, the program was paused at startup and
+  no user I/O was shown until GDB connected.
+- In `--tcp` mode, the CLI keeps running after GDB disconnects, and GDB can connect again.
+- Detaching GDB (`detach`, or quitting GDB) now resumes the program. Before, the program stayed
+  paused until another GDB connected. Use GDB's `disconnect` command to leave it paused.
 
 ## [0.1.0-beta.2]
 

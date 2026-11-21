@@ -5,8 +5,8 @@ use core::{mem, ptr::NonNull};
 use gdbstub::{
     conn::{Connection, ConnectionExt},
     stub::{
-        GdbStub, GdbStubBuilder, GdbStubError, MultiThreadStopReason, SingleThreadStopReason,
-        state_machine::GdbStubStateMachine,
+        DisconnectReason, GdbStub, GdbStubBuilder, GdbStubError, MultiThreadStopReason,
+        SingleThreadStopReason, state_machine::GdbStubStateMachine,
     },
 };
 use spin::{Mutex, MutexGuard, Once};
@@ -418,10 +418,11 @@ where
 
     /// Returns whether a GDB client is connected.
     ///
-    /// Only valid outside the debug monitor. The session is in `Running` while a client has
-    /// resumed the program and `Idle` before any client has connected. Disconnects only happen
-    /// inside the debug monitor, which stays active until a new client resumes the program.
+    /// Only valid outside the debug monitor.
     fn has_client(&self) -> bool {
+        // The session is in `Running` while a client has resumed the program, and `Idle` before any
+        // client has connected or after a client detached. Other disconnects leave the debug
+        // monitor active until a new client resumes the program.
         matches!(
             self.stage,
             SessionStage::Active(GdbStubStateMachine::Running(_))
@@ -571,18 +572,24 @@ where
                 Ok(gdb.report_stop(target, reported_reason)?)
             }
             GdbStubStateMachine::CtrlCInterrupt(gdb) => {
-                logging::warn!(
+                // The CLI interrupts the program whenever GDB connects, so this is expected when a
+                // new client connects after the previous one left the program paused.
+                logging::info!(
                     "Received a request to pause the program while it was already paused."
                 );
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }
             GdbStubStateMachine::Disconnected(gdb) => {
-                logging::info!("GDB disconnected: {:?}", gdb.get_reason());
-                // If we're about to exit the program, then GDB is probably disconnecting to let us
-                // do that. In that case, unpause and actually exit. Otherwise, stay in the debug
-                // monitor so a new GDB instance can pick up where we left off.
-                if target.monitor_status == MonitorStatus::Exiting {
+                let reason = gdb.get_reason();
+                logging::info!("GDB disconnected: {reason:?}");
+                // Resume the program if GDB detached (`detach`, or quitting GDB), like other GDB
+                // servers do. If we're about to exit the program, then GDB is probably
+                // disconnecting to let us do that, so unpause and actually exit. Otherwise, stay
+                // in the debug monitor so a new GDB instance can pick up where we left off.
+                if matches!(reason, DisconnectReason::Disconnect)
+                    || target.monitor_status == MonitorStatus::Exiting
+                {
                     target.monitor_status = MonitorStatus::ResumingProgram;
                 }
                 Ok(gdb.return_to_idle())

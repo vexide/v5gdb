@@ -1,15 +1,16 @@
 use std::{
-    cell::OnceCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
+    cell::OnceCell, env::current_dir, ffi::OsString, future::pending, io, path::PathBuf,
+    process::exit, time::Duration,
 };
 
 use anyhow::Context;
 use clap::{Parser, builder::styling};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use vex_v5_serial::{
     Connection,
@@ -327,22 +328,22 @@ fn connect_device(device: &SerialDevice) -> anyhow::Result<SerialConnection> {
         .context("Failed to open the V5's serial port (another program may be using it)")
 }
 
+/// Bridges the device's serial connection to GDB clients, one at a time.
+///
+/// Program output and input are forwarded the whole time, including while no client is connected.
+/// When a client connects, the program is interrupted so GDB can attach. After it disconnects, a
+/// new client can connect. This returns when the device is unplugged.
 async fn serve_device_serial(
-    mut dev_conn: SerialConnection,
+    dev_conn: SerialConnection,
     server: TcpListener,
     user_io: UserIoMode,
     mut input: UserInput,
 ) -> anyhow::Result<()> {
-    // Pause the program in case it's running so that GDB can attach to it.
-    debug!("Sending interrupt to device");
-    serial::Packet::send_interrupt(&mut dev_conn).await?;
-
     let mut program_output = [0; 2048];
     let mut program_input = [0; 4096];
 
     let user_out = make_user_out(stderr(), user_io);
-    let (client, _addr) = server.accept().await?;
-    let mut stream = V5SerialStream::new(dev_conn, client, user_out, make_error_handler());
+    let mut stream = V5SerialStream::new(dev_conn, None, user_out, make_error_handler());
 
     loop {
         tokio::select! {
@@ -359,9 +360,22 @@ async fn serve_device_serial(
                     }
                 }
             },
-            read = stream.client.read(&mut program_input) => {
+            accepted = server.accept(), if stream.client.is_none() => {
+                let (client, addr) = accepted?;
+                debug!(%addr, "GDB connected");
+
+                // Pause the program in case it's running so that GDB can attach to it. This is
+                // sent before any of the client's data, so the device sees it first.
+                debug!("Sending interrupt to device");
+                serial::Packet::send_interrupt(&mut stream.device).await?;
+                stream.client = Some(client);
+            },
+            read = read_client(&mut stream.client, &mut program_input) => {
                 match read {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        info!("GDB disconnected, waiting for a new connection");
+                        stream.client = None;
+                    }
                     Ok(size) => {
                         let good = stream.handle_client_data(&program_input[..size]).await;
                         if !good {
@@ -371,12 +385,14 @@ async fn serve_device_serial(
                         }
                     }
                     Err(err) => {
-                        error!("GDB connection closed: {err}");
-                        break;
+                        warn!("GDB connection closed: {err}");
+                        info!("GDB disconnected, waiting for a new connection");
+                        stream.client = None;
                     }
                 }
             },
-            // Once this hits EOF, `next` will just stop returning
+            // Once this hits EOF, `next` will just stop resolving. Unlike --terminal, we don't
+            // exit, because a GDB might still want to talk to the device.
             Some(data) = input.next() => {
                 if !stream.handle_user_input(&data).await {
                     break;
@@ -386,4 +402,12 @@ async fn serve_device_serial(
     }
 
     Ok(())
+}
+
+/// Reads from the GDB client, or waits forever if none has connected yet.
+async fn read_client(client: &mut Option<TcpStream>, buf: &mut [u8]) -> io::Result<usize> {
+    match client {
+        Some(client) => client.read(buf).await,
+        None => pending().await,
+    }
 }
