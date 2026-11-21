@@ -242,7 +242,7 @@ unsafe impl<S: Transport> Debugger for V5Debugger<S> {
 
         let stop_reason = session.target.enter_breakpoint(ctx);
 
-        mux::warn_if_user_read();
+        mux::warn_if_user_input_dropped();
 
         if session.target.stop_motors_on_break {
             logging::debug!("Auto motor-stop triggered by breakpoint");

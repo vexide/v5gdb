@@ -99,6 +99,9 @@ pub unsafe trait Transport: Send + 'static {
 #[non_exhaustive]
 pub struct StdioTransport {
     buffer: heapless::Vec<u8, { mux::MAX_PAYLOAD_LEN }>,
+    demux: mux::Demux,
+    /// A debugger byte that has been decoded by [`Transport::peek`] but not yet read.
+    peeked: Option<u8>,
     // Serial reading is single-consumer.
     _unsync: PhantomData<UnsafeCell<()>>,
 }
@@ -108,7 +111,28 @@ impl StdioTransport {
         Self {
             _unsync: PhantomData,
             buffer: heapless::Vec::new(),
+            demux: mux::Demux::new(),
+            peeked: None,
         }
+    }
+
+    /// Returns the next debugger byte from the host, or `None` if there is no debugger serial input
+    /// to read.
+    ///
+    /// Any user inputs received are queued for the program. This is safe to call from an interrupt
+    /// context.
+    fn next_debugger_byte(&mut self) -> Option<u8> {
+        if let Some(byte) = self.peeked.take() {
+            return Some(byte);
+        }
+
+        while let Some(raw) = serial::read_byte(Channel::USER) {
+            if let Some(byte) = self.demux.feed(raw) {
+                return Some(byte);
+            }
+        }
+
+        None
     }
 
     fn tx_packet(&mut self) {
@@ -126,8 +150,10 @@ impl Default for StdioTransport {
 
 // SAFETY: Serial reading is safe to perform from an interrupt context because it just reads from
 // a lock-free SPSC ringbuffer which is filled asynchronously by CPU0. To ensure there is actually
-// only one consumer at a time we disable user reads via [`mux::enable_auto_muxing`] and unimplement
-// Sync. See also <https://internals.vexide.dev/sdk/tasks#system-tasks>.
+// only one consumer at a time, [`mux::enable_auto_muxing`] redirects the program's serial reads to
+// the queue that [`mux::Demux`] fills, and this type doesn't implement Sync. Pushing to that queue
+// is lock-free, so it's also interrupt-safe. See also:
+// <https://internals.vexide.dev/sdk/tasks#system-tasks>.
 unsafe impl Transport for StdioTransport {
     fn write(&mut self, byte: u8) -> Result<(), TransportError> {
         if self.buffer.is_full() {
@@ -173,12 +199,15 @@ unsafe impl Transport for StdioTransport {
     }
 
     fn peek(&mut self) -> Result<Option<u8>, TransportError> {
-        Ok(serial::peek_byte(Channel::USER))
+        if self.peeked.is_none() {
+            self.peeked = self.next_debugger_byte();
+        }
+        Ok(self.peeked)
     }
 
     fn read(&mut self) -> Result<u8, TransportError> {
         loop {
-            if let Some(byte) = serial::read_byte(Channel::USER) {
+            if let Some(byte) = self.next_debugger_byte() {
                 return Ok(byte);
             }
 
@@ -189,8 +218,6 @@ unsafe impl Transport for StdioTransport {
     }
 
     fn try_read(&mut self) -> Result<Option<u8>, TransportError> {
-        // `vexSerialPeekChar` doesn't seem to work properly in ISRs, so we need an explicit
-        // implementation here.
-        Ok(serial::read_byte(Channel::USER))
+        Ok(self.next_debugger_byte())
     }
 }

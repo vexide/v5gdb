@@ -19,11 +19,13 @@ use vex_v5_serial::{
 use crate::{
     debugger::{Debugger, DebuggerKind},
     framework::{Project, ProjectKind},
+    input::UserInput,
     serial::{ErrorHandler, SerialStreamError, V5SerialStream, pros::ProsDecoder},
 };
 
 mod debugger;
 mod framework;
+mod input;
 mod serial;
 mod terminal;
 
@@ -33,6 +35,13 @@ async fn main() -> anyhow::Result<()> {
     init_logging(args.debug_io)?;
     args.warn_if_ignored_args();
 
+    if let Err(err) = run(args).await {
+        error!("{err:?}");
+    }
+    Ok(())
+}
+
+async fn run(args: Args) -> anyhow::Result<()> {
     debug!("Scanning for VEX V5 devices to connect to...");
     let mut all_devices = find_devices()?;
     if all_devices.is_empty() {
@@ -71,11 +80,15 @@ pub const STYLES: styling::Styles = styling::Styles::styled()
 #[command(name = "v5gdb", version, author, styles(STYLES))]
 struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
+    ///
+    /// In this mode, the program's output is printed to stderr and stdin is sent to the program.
     #[clap(long)]
     tcp: Option<String>,
-    /// Only show the program's output and v5gdb's logs, without starting a debugger.
+    /// Access a Brain's serial I/O over stdin/stdout without starting a debugger.
     ///
-    /// Unlike the debugger modes, this does not interrupt the program when it connects.
+    /// Unlike the debugger modes, this does not pause the program when it connects. Compared to
+    /// framework tools (e.g. pros terminal), this will also decode v5gdb's serial packets,
+    /// allowing for less garbled output.
     #[clap(
         short,
         long,
@@ -220,9 +233,15 @@ impl App {
         }
 
         let user_io = self.args.user_io;
+        // When GDB runs as a subprocess, it needs to use stdin itself.
+        let input = if self.args.tcp.is_some() {
+            UserInput::stdin()
+        } else {
+            UserInput::none()
+        };
         Ok(tokio::spawn(async move {
-            if let Err(err) = serve_device_serial(dev_conn, server, user_io).await {
-                error!("{err:#}");
+            if let Err(err) = serve_device_serial(dev_conn, server, user_io, input).await {
+                error!("TCP Server: {err:?}");
             }
         }))
     }
@@ -312,11 +331,11 @@ async fn serve_device_serial(
     mut dev_conn: SerialConnection,
     server: TcpListener,
     user_io: UserIoMode,
+    mut input: UserInput,
 ) -> anyhow::Result<()> {
     // Pause the program in case it's running so that GDB can attach to it.
-    const CTRL_C: u8 = 0x03;
     debug!("Sending interrupt to device");
-    dev_conn.write_user(&[CTRL_C]).await?;
+    serial::Packet::send_interrupt(&mut dev_conn).await?;
 
     let mut program_output = [0; 2048];
     let mut program_input = [0; 4096];
@@ -355,6 +374,12 @@ async fn serve_device_serial(
                         error!("GDB connection closed: {err}");
                         break;
                     }
+                }
+            },
+            // Once this hits EOF, `next` will just stop returning
+            Some(data) = input.next() => {
+                if !stream.handle_user_input(&data).await {
+                    break;
                 }
             }
         }

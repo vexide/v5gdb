@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Added the `-t`/`--terminal` flag, which shows the program's output and v5gdb's logs without
   starting a debugger or interrupting the program.
+- Programs can now read serial input while v5gdb's stdio transport is active. In `--tcp` and
+  `--terminal` mode, the CLI sends its stdin to the program.
+
+### Changed
+
+- **Breaking:** the CLI now sends COBS-framed packets to the device (the same format the device
+  already used for its output). Older CLIs won't be able to talk to this version of the debugger.
 
 ## [0.1.0-beta.2]
 

@@ -211,15 +211,11 @@ pub mod serial {
         }
     }
 
-    /// Reads a single byte from the specified channel without popping it from the read queue.
-    ///
-    /// Returns `None` if there was no byte to read.
-    pub fn peek_byte(channel: Channel) -> Option<u8> {
+    /// Returns the number of received bytes waiting to be read from the given channel.
+    pub fn incoming_len(channel: Channel) -> usize {
+        // vexSerialPeekChar
         let sys_peek = unsafe { jumptable!(0x8a4, extern "C" fn(u32) -> i32) };
-        match sys_peek(channel.0) {
-            -1 => None,
-            byte => Some(byte as u8),
-        }
+        sys_peek(channel.0).max(0) as usize
     }
 
     /// Gets the number of unused bytes in the serial output ringbuffer.
