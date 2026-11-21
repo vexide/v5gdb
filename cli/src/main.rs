@@ -84,19 +84,18 @@ struct Args {
     ///
     /// In this mode, the program's output is printed to stderr and stdin is sent to the program.
     #[clap(long)]
+    #[clap(conflicts_with_all = ["terminal"])]
     tcp: Option<String>,
     /// Access a Brain's serial I/O over stdin/stdout without starting a debugger.
     ///
     /// Unlike the debugger modes, this does not pause the program when it connects. Compared to
     /// framework tools (e.g. pros terminal), this will also decode v5gdb's serial packets,
     /// allowing for less garbled output.
-    #[clap(
-        short,
-        long,
-        conflicts_with_all = ["tcp", "elf_files_to_debug", "client", "lldb", "client_args"],
-    )]
+    #[clap(short, long)]
+    #[clap(conflicts_with_all = ["tcp"])]
     terminal: bool,
     /// List of ELF files to debug with GDB (has no effect in TCP mode).
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     elf_files_to_debug: Vec<PathBuf>,
     /// Logs all decoding errors and serial I/O (same as adding `v5gdb::serial=trace` to
     /// `V5GDB_LOG`).
@@ -104,6 +103,7 @@ struct Args {
     debug_io: bool,
     /// Disables auto-discovery of ELF files when none are specified.
     #[clap(long, env = "V5GDB_NO_DISCOVER_ELF")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     no_discover_elf: bool,
     /// Controls the format which is used to parse user serial output.
     ///
@@ -118,13 +118,16 @@ struct Args {
     /// `--lldb` is specified). By default, v5gdb searches for a suitable GDB executable in various
     /// locations.
     #[clap(short, long, env = "V5GDB_CLIENT")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     client: Option<PathBuf>,
     /// Use LLDB as the debug client instead of GDB. This is turned on automatically if the
     /// `--client` executable's name contains "lldb".
     #[clap(long)]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     lldb: bool,
     /// Extra arguments to pass to the debug client.
     #[clap(short = 'C', long = "client-arg")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     client_args: Vec<OsString>,
 }
 
