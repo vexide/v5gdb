@@ -1,0 +1,110 @@
+# Repackages the GDB from xPack's GNU Arm Embedded GCC, removing everything but GDB, Python, and
+# their dependencies.
+name: GDB
+
+on:
+  # Build & test on PRs which change repack logic.
+  pull_request:
+    paths:
+      - xtask/**
+      - .github/workflows/gdb.yml
+  # This does an actual publish and makes a draft `gdb-v<version>` release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repack:
+    name: Repackage
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup | Toolchain
+        run: rustup toolchain install --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Get xPack Version
+        id: version
+        run: echo "version=$(cargo xtask repack-gdb --print-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Repackage
+        run: cargo xtask repack-gdb
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gdb
+          path: |
+            target/gdb/dist/
+            target/gdb/release-notes.md
+
+  test:
+    name: Test (${{ matrix.platform }})
+    needs: repack
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: darwin-arm64, runner: macos-26 }
+          - { platform: darwin-x64, runner: macos-15-intel }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+          - { platform: linux-x64, runner: ubuntu-24.04 }
+          - { platform: win32-x64, runner: windows-2025 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      NAME: arm-none-eabi-gdb-${{ needs.repack.outputs.version }}-${{ matrix.platform }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gdb
+
+      # On macOS gdb may be extracted to Application Support, so it's worth testing that paths with
+      # spaces in them work.
+      - name: Extract
+        run: |
+          mkdir "extracted gdb"
+          if [ -f "dist/$NAME.zip" ]; then
+            unzip -q "dist/$NAME.zip" -d "extracted gdb"
+          else
+            tar -xzf "dist/$NAME.tar.gz" -C "extracted gdb"
+          fi
+          echo "GDB=$PWD/extracted gdb/$NAME/bin/arm-none-eabi-gdb-py3" >> "$GITHUB_ENV"
+
+      # GDB should start up and have Python/DAP support. IDEs use gdb via DAP for interactive
+      # debugging.
+      - name: Run GDB
+        run: |
+          "$GDB" --version
+          "$GDB" -nx -batch \
+            -ex 'show data-directory' \
+            -ex 'python import gdb.dap'
+
+  release:
+    name: Create draft release
+    if: github.event_name == 'workflow_dispatch'
+    needs: [repack, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: gdb-v${{ needs.repack.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gdb
+
+      # `--latest=false` keeps the v5gdb CLI release as the repository's latest release.
+      - name: Create release
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --draft --latest=false --title "GDB ${{ needs.repack.outputs.version }}" \
+            --notes-file release-notes.md dist/*

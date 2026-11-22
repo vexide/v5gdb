@@ -1,3 +1,5 @@
+mod gdb;
+
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -33,6 +35,20 @@ enum Args {
         )]
         extra_args: Vec<String>,
     },
+    /// Download an xPack ARM toolchain and repack it with only GDB and its dependencies.
+    ///
+    /// Writes the archives and a SHA256SUMS file to `<OUT>/dist`, and release notes to
+    /// `<OUT>/release-notes.md`.
+    RepackGdb {
+        /// Platforms to repackage (e.g. darwin-arm64, win32-x64). Defaults to all of them.
+        platforms: Vec<String>,
+        /// Output directory. Defaults to `target/gdb`.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Print the version of the repackaged GDB (used in the `gdb-v<VERSION>` tag) and exit.
+        #[arg(long)]
+        print_version: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
@@ -50,6 +66,22 @@ fn main() {
             template_out,
             extra_args,
         } => build(target, template_out, extra_args),
+        Args::RepackGdb {
+            platforms,
+            out,
+            print_version,
+        } => {
+            if print_version {
+                println!("{}", gdb::version());
+                return;
+            }
+            let out_dir =
+                out.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/gdb"));
+            if let Err(err) = gdb::repack(&out_dir, &platforms) {
+                eprintln!("error: {err:#}");
+                exit(1);
+            }
+        }
     }
 }
 
