@@ -1,15 +1,16 @@
 use std::{
-    cell::OnceCell, env::current_dir, ffi::OsString, path::PathBuf, process::exit, time::Duration,
+    cell::OnceCell, env::current_dir, ffi::OsString, future::pending, io, path::PathBuf,
+    process::exit, time::Duration,
 };
 
 use anyhow::Context;
 use clap::{Parser, builder::styling};
 use tokio::{
     io::{AsyncReadExt, AsyncWrite, stderr},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use vex_v5_serial::{
     Connection,
@@ -19,11 +20,13 @@ use vex_v5_serial::{
 use crate::{
     debugger::{Debugger, DebuggerKind},
     framework::{Project, ProjectKind},
+    input::UserInput,
     serial::{ErrorHandler, SerialStreamError, V5SerialStream, pros::ProsDecoder},
 };
 
 mod debugger;
 mod framework;
+mod input;
 mod serial;
 mod terminal;
 
@@ -33,6 +36,13 @@ async fn main() -> anyhow::Result<()> {
     init_logging(args.debug_io)?;
     args.warn_if_ignored_args();
 
+    if let Err(err) = run(args).await {
+        error!("{err:?}");
+    }
+    Ok(())
+}
+
+async fn run(args: Args) -> anyhow::Result<()> {
     debug!("Scanning for VEX V5 devices to connect to...");
     let mut all_devices = find_devices()?;
     if all_devices.is_empty() {
@@ -71,18 +81,21 @@ pub const STYLES: styling::Styles = styling::Styles::styled()
 #[command(name = "v5gdb", version, author, styles(STYLES))]
 struct Args {
     /// Instead of starting GDB as a subprocess, open a GDB remote server on the given address.
-    #[clap(long)]
-    tcp: Option<String>,
-    /// Only show the program's output and v5gdb's logs, without starting a debugger.
     ///
-    /// Unlike the debugger modes, this does not interrupt the program when it connects.
-    #[clap(
-        short,
-        long,
-        conflicts_with_all = ["tcp", "elf_files_to_debug", "client", "lldb", "client_args"],
-    )]
+    /// In this mode, the program's output is printed to stderr and stdin is sent to the program.
+    #[clap(long)]
+    #[clap(conflicts_with_all = ["terminal"])]
+    tcp: Option<String>,
+    /// Access a Brain's serial I/O over stdin/stdout without starting a debugger.
+    ///
+    /// Unlike the debugger modes, this does not pause the program when it connects. Compared to
+    /// framework tools (e.g. pros terminal), this will also decode v5gdb's serial packets,
+    /// allowing for less garbled output.
+    #[clap(short, long)]
+    #[clap(conflicts_with_all = ["tcp"])]
     terminal: bool,
     /// List of ELF files to debug with GDB (has no effect in TCP mode).
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     elf_files_to_debug: Vec<PathBuf>,
     /// Logs all decoding errors and serial I/O (same as adding `v5gdb::serial=trace` to
     /// `V5GDB_LOG`).
@@ -90,6 +103,7 @@ struct Args {
     debug_io: bool,
     /// Disables auto-discovery of ELF files when none are specified.
     #[clap(long, env = "V5GDB_NO_DISCOVER_ELF")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     no_discover_elf: bool,
     /// Controls the format which is used to parse user serial output.
     ///
@@ -104,13 +118,16 @@ struct Args {
     /// `--lldb` is specified). By default, v5gdb searches for a suitable GDB executable in various
     /// locations.
     #[clap(short, long, env = "V5GDB_CLIENT")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     client: Option<PathBuf>,
     /// Use LLDB as the debug client instead of GDB. This is turned on automatically if the
     /// `--client` executable's name contains "lldb".
     #[clap(long)]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     lldb: bool,
     /// Extra arguments to pass to the debug client.
     #[clap(short = 'C', long = "client-arg")]
+    #[clap(conflicts_with_all = ["tcp", "terminal"])]
     client_args: Vec<OsString>,
 }
 
@@ -220,9 +237,15 @@ impl App {
         }
 
         let user_io = self.args.user_io;
+        // When GDB runs as a subprocess, it needs to use stdin itself.
+        let input = if self.args.tcp.is_some() {
+            UserInput::stdin()
+        } else {
+            UserInput::none()
+        };
         Ok(tokio::spawn(async move {
-            if let Err(err) = serve_device_serial(dev_conn, server, user_io).await {
-                error!("{err:#}");
+            if let Err(err) = serve_device_serial(dev_conn, server, user_io, input).await {
+                error!("TCP Server: {err:?}");
             }
         }))
     }
@@ -308,22 +331,22 @@ fn connect_device(device: &SerialDevice) -> anyhow::Result<SerialConnection> {
         .context("Failed to open the V5's serial port (another program may be using it)")
 }
 
+/// Bridges the device's serial connection to GDB clients, one at a time.
+///
+/// Program output and input are forwarded the whole time, including while no client is connected.
+/// When a client connects, the program is interrupted so GDB can attach. After it disconnects, a
+/// new client can connect. This returns when the device is unplugged.
 async fn serve_device_serial(
-    mut dev_conn: SerialConnection,
+    dev_conn: SerialConnection,
     server: TcpListener,
     user_io: UserIoMode,
+    mut input: UserInput,
 ) -> anyhow::Result<()> {
-    // Pause the program in case it's running so that GDB can attach to it.
-    const CTRL_C: u8 = 0x03;
-    debug!("Sending interrupt to device");
-    dev_conn.write_user(&[CTRL_C]).await?;
-
     let mut program_output = [0; 2048];
     let mut program_input = [0; 4096];
 
     let user_out = make_user_out(stderr(), user_io);
-    let (client, _addr) = server.accept().await?;
-    let mut stream = V5SerialStream::new(dev_conn, client, user_out, make_error_handler());
+    let mut stream = V5SerialStream::new(dev_conn, None, user_out, make_error_handler());
 
     loop {
         tokio::select! {
@@ -340,9 +363,22 @@ async fn serve_device_serial(
                     }
                 }
             },
-            read = stream.client.read(&mut program_input) => {
+            accepted = server.accept(), if stream.client.is_none() => {
+                let (client, addr) = accepted?;
+                debug!(%addr, "GDB connected");
+
+                // Pause the program in case it's running so that GDB can attach to it. This is
+                // sent before any of the client's data, so the device sees it first.
+                debug!("Sending interrupt to device");
+                serial::Packet::send_interrupt(&mut stream.device).await?;
+                stream.client = Some(client);
+            },
+            read = read_client(&mut stream.client, &mut program_input) => {
                 match read {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        info!("GDB disconnected, waiting for a new connection");
+                        stream.client = None;
+                    }
                     Ok(size) => {
                         let good = stream.handle_client_data(&program_input[..size]).await;
                         if !good {
@@ -352,13 +388,29 @@ async fn serve_device_serial(
                         }
                     }
                     Err(err) => {
-                        error!("GDB connection closed: {err}");
-                        break;
+                        warn!("GDB connection closed: {err}");
+                        info!("GDB disconnected, waiting for a new connection");
+                        stream.client = None;
                     }
+                }
+            },
+            // Once this hits EOF, `next` will just stop resolving. Unlike --terminal, we don't
+            // exit, because a GDB might still want to talk to the device.
+            Some(data) = input.next() => {
+                if !stream.handle_user_input(&data).await {
+                    break;
                 }
             }
         }
     }
 
     Ok(())
+}
+
+/// Reads from the GDB client, or waits forever if none has connected yet.
+async fn read_client(client: &mut Option<TcpStream>, buf: &mut [u8]) -> io::Result<usize> {
+    match client {
+        Some(client) => client.read(buf).await,
+        None => pending().await,
+    }
 }

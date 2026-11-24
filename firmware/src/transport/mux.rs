@@ -1,7 +1,10 @@
-//! Automatic framing of user serial writes.
+//! Multiplexing of user serial I/O and debugger traffic.
 //!
 //! This module contains alternative implementations of certain VEX SDK functions which capture
 //! calls to functions like `vexSerial*` to automatically add framing via a multiplexing protocol.
+//!
+//! Both directions use the same format: each packet is COBS-encoded, starts with a [`ChannelId`]
+//! byte, and ends with a `0` delimiter. Incoming packets are decoded by a [`Demux`] state machine.
 //!
 //! The current implementation is compatible with the following SDKs:
 //!
@@ -16,7 +19,10 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use cobs::CobsEncoder;
+use cobs::{CobsEncoder, DecodeResult, DecoderState};
+use heapless::spsc::{Consumer, Producer, Queue};
+use spin::{Mutex, Once};
+use static_cell::ConstStaticCell;
 
 use crate::sdk::serial::{self, Channel};
 
@@ -25,24 +31,105 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// This is used to detect whether installing the mux was actually successful.
 static MUXED_PEEK_CHAR_CALLED: AtomicBool = AtomicBool::new(false);
 
-/// Whether the program has tried to read from user serial since the mux was enabled.
-static PROGRAM_TRIED_TO_READ: AtomicBool = AtomicBool::new(false);
+/// The number of bytes of user input that can be queued before the program reads them.
+const USER_RX_CAPACITY: usize = 1024;
 
-/// Whether [`warn_if_program_read`] has already logged its warning.
-static READ_WARNING_LOGGED: AtomicBool = AtomicBool::new(false);
+/// User input received from the host, waiting for the program to read it.
+static USER_RX: UserRx = UserRx::new();
+
+/// A queue of user input, filled by [`Demux`] and read by the program's `vexSerialReadChar` and
+/// `vexSerialPeekChar` calls.
+///
+/// The producer is only used by the transport, which only runs while the debugger's session is
+/// locked, so it's never contended. The consumer is used by the program's serial reads, which may
+/// come from several tasks; a read that loses the race for the lock just sees no data.
+///
+/// None of these methods block, so they're safe to call from an interrupt context and from tasks
+/// with small stacks.
+struct UserRx {
+    storage: ConstStaticCell<Queue<u8, USER_RX_CAPACITY>>,
+    /// The two ends of the queue, created from `storage` on first use.
+    ends: Once<QueueEnds>,
+    /// Whether input has been dropped because the queue was full.
+    overflowed: AtomicBool,
+}
+
+struct QueueEnds {
+    producer: Mutex<Producer<'static, u8>>,
+    consumer: Mutex<Consumer<'static, u8>>,
+}
+
+impl UserRx {
+    const fn new() -> Self {
+        Self {
+            storage: ConstStaticCell::new(Queue::new()),
+            ends: Once::new(),
+            overflowed: AtomicBool::new(false),
+        }
+    }
+
+    /// Returns the queue's ends, creating them if needed.
+    ///
+    /// Call this outside of interrupts before the queue is used from one, because an interrupt
+    /// that arrives while another context is creating the ends would spin forever.
+    fn ends(&'static self) -> &'static QueueEnds {
+        self.ends.call_once(|| {
+            let (producer, consumer) = self.storage.take().split();
+            QueueEnds {
+                producer: Mutex::new(producer),
+                consumer: Mutex::new(consumer),
+            }
+        })
+    }
+
+    /// Queues a byte, or records that it was dropped if the queue is full.
+    fn push(&'static self, byte: u8) {
+        // The try_lock here could give a false positive overflow if we accidentally call this from
+        // the wrong context, but it seems better than panicking.
+        let queued = self
+            .ends()
+            .producer
+            .try_lock()
+            .is_some_and(|mut producer| producer.enqueue(byte).is_ok());
+        if !queued {
+            self.overflowed.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Removes and returns the next byte, if there is one.
+    fn pop(&'static self) -> Option<u8> {
+        self.ends()
+            .consumer
+            .try_lock()
+            .and_then(|mut consumer| consumer.dequeue())
+    }
+
+    /// Returns the number of queued bytes.
+    fn len(&'static self) -> usize {
+        self.ends()
+            .consumer
+            .try_lock()
+            .map_or(0, |consumer| consumer.len())
+    }
+
+    /// Returns whether input was dropped since the last call.
+    fn take_overflowed(&self) -> bool {
+        self.overflowed.swap(false, Ordering::Relaxed)
+    }
+}
 
 /// Checks whether the serial mux has been enabled.
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// Logs a warning (once) if the program has tried to read from user serial while the mux was
-/// enabled.
-pub fn warn_if_user_read() {
-    if PROGRAM_TRIED_TO_READ.load(Ordering::Relaxed)
-        && !READ_WARNING_LOGGED.swap(true, Ordering::Relaxed)
-    {
-        crate::logging::warn!("Reading from serial while the debugger is active is unimplemented!");
+/// Logs a warning if user input has been dropped since the last call because the program didn't
+/// read it fast enough.
+pub fn warn_if_user_input_dropped() {
+    if USER_RX.take_overflowed() {
+        crate::logging::warn!(
+            "Some serial input was dropped because the program didn't read it fast enough"
+        );
     }
 }
 
@@ -50,6 +137,8 @@ pub fn warn_if_user_read() {
 /// sending them over the User channel.
 pub fn enable_auto_muxing() {
     ENABLED.store(true, Ordering::Relaxed);
+    // Set up the input queue now, before the debugger's interrupt handler can use it.
+    _ = USER_RX.ends();
 
     // Anything written before this point (e.g. vexide's startup banner) isn't framed and could
     // confuse the COBS decoder on the host, so reset its state by sending a packet delimiter.
@@ -119,6 +208,69 @@ pub const MAX_PAYLOAD_LEN: usize = PACKET_BUF_SIZE - 3;
 #[expect(clippy::int_plus_one)]
 const _: () = assert!(cobs::max_encoding_length(1 + MAX_PAYLOAD_LEN) + 1 <= PACKET_BUF_SIZE);
 
+/// Decoder for the multiplexed serial stream sent by the host.
+///
+/// Bytes are decoded one at a time as they arrive, so no buffer is needed for whole packets.
+/// Debugger bytes are returned to the transport and user bytes are queued for the program's
+/// `vexSerialReadChar` and `vexSerialPeekChar` calls.
+#[derive(Debug)]
+pub struct Demux {
+    cobs: DecoderState,
+    channel: ChannelState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelState {
+    /// The next decoded byte is the packet's channel ID.
+    Pending,
+    Known(ChannelId),
+    /// The packet is malformed or has an unknown channel, so its contents are dropped.
+    Invalid,
+}
+
+impl Demux {
+    pub const fn new() -> Self {
+        Self {
+            cobs: DecoderState::Idle,
+            channel: ChannelState::Pending,
+        }
+    }
+
+    /// Processes one byte received from the host.
+    ///
+    /// Returns the decoded byte if it belongs to the debugger channel. Bytes on the user channel
+    /// are queued for the program to read. This is safe to call from an interrupt context.
+    pub fn feed(&mut self, byte: u8) -> Option<u8> {
+        match self.cobs.feed(byte) {
+            Ok(DecodeResult::NoData) => {}
+            Ok(DecodeResult::DataStart | DecodeResult::DataComplete) | Err(_) => {
+                self.channel = ChannelState::Pending;
+            }
+            Ok(DecodeResult::DataContinue(data)) => match self.channel {
+                ChannelState::Pending => {
+                    self.channel = match data {
+                        b'u' => ChannelState::Known(ChannelId::User),
+                        b'd' => ChannelState::Known(ChannelId::Debug),
+                        // The Debugger Logs channel only makes sense in the device->host direction.
+                        _ => ChannelState::Invalid,
+                    };
+                }
+                ChannelState::Known(ChannelId::Debug) => return Some(data),
+                ChannelState::Known(ChannelId::User) => USER_RX.push(data),
+                ChannelState::Known(ChannelId::DebugLog) | ChannelState::Invalid => {}
+            },
+        }
+
+        None
+    }
+}
+
+impl Default for Demux {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Write one or more COBS-encoded packets to serial output, each prefixed with the given channel
 /// id.
 ///
@@ -158,7 +310,7 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 ///
 /// This module contains replacements for the standard `vexSerial*` functions which automatically
 /// add additional framing so that serial consumers can easily differentiate debug data from
-/// standard user I/O. Currently only writes are muxed and reads are simply ignored.
+/// standard user I/O. Reads return the user input that [`Demux`] has received from the host.
 mod user {
     use core::sync::atomic::Ordering;
 
@@ -192,24 +344,22 @@ mod user {
     pub extern "C" fn read_char(channel: u32) -> i32 {
         let channel = Channel::from(channel);
         if channel == Channel::USER {
-            // Queue a warning for later since we might be on a small stack that can't handle
-            // logging.
-            PROGRAM_TRIED_TO_READ.store(true, Ordering::Relaxed);
-            return -1;
+            return USER_RX.pop().map_or(-1, i32::from);
         }
 
         serial::read_byte(channel).map(|n| n as i32).unwrap_or(-1)
     }
 
+    /// Returns the number of unread bytes (see [`serial::incoming_len`]). This does NOT "peek" the
+    /// next character in the traditional sense! Matches behavior of `vexSerialPeekChar`.
     pub extern "C" fn peek_char(channel: u32) -> i32 {
         MUXED_PEEK_CHAR_CALLED.store(true, Ordering::Relaxed);
 
         let channel = Channel::from(channel);
         if channel == Channel::USER {
-            PROGRAM_TRIED_TO_READ.store(true, Ordering::Relaxed);
-            return -1;
+            return USER_RX.len() as i32;
         }
 
-        serial::peek_byte(channel).map(|n| n as i32).unwrap_or(-1)
+        serial::incoming_len(channel) as i32
     }
 }

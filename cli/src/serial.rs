@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io, mem};
+use std::{borrow::Cow, io, iter, mem};
 
 use cobs::{CobsDecoderOwned, DecodeError};
 use thiserror::Error;
@@ -30,10 +30,10 @@ pub enum SerialStreamError<'a> {
 /// Demultiplexes v5gdb's serial stream.
 ///
 /// User output is written to `U`, debugger logs to stderr, and debugger packets to `C` (the GDB
-/// client).
+/// client). Debugger packets are dropped while there is no client.
 pub struct V5SerialStream<U, C> {
     pub device: SerialConnection,
-    pub client: C,
+    pub client: Option<C>,
     decoder: CobsDecoderOwned,
     /// The raw bytes of the frame currently being decoded, excluding delimiters.
     raw_frame: Vec<u8>,
@@ -47,7 +47,7 @@ pub type ErrorHandler = Box<dyn FnMut(SerialStreamError<'_>) + Send>;
 impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
     pub fn new(
         device: SerialConnection,
-        client: C,
+        client: Option<C>,
         user_out: U,
         error_handler: ErrorHandler,
     ) -> Self {
@@ -133,8 +133,12 @@ impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
                 self.debug_out.write_all(packet.body).await?;
             }
             Channel::Debugger => {
-                trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> gdb");
-                self.client.write_all(packet.body).await?;
+                if let Some(client) = &mut self.client {
+                    trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> gdb");
+                    client.write_all(packet.body).await?;
+                } else {
+                    trace!(body = %String::from_utf8_lossy(packet.body), "dev[gdb] -> (dropped)");
+                }
             }
         }
 
@@ -142,46 +146,112 @@ impl<U: AsyncWrite + Unpin, C: AsyncWrite + Unpin> V5SerialStream<U, C> {
     }
 
     /// Forwards data from the client to the device and returns whether it was sent.
-    pub async fn handle_client_data(&mut self, mut buf: &[u8]) -> bool {
+    pub async fn handle_client_data(&mut self, buf: &[u8]) -> bool {
         trace!(body = %String::from_utf8_lossy(buf), "gdb -> dev[gdb]");
+        self.send(Channel::Debugger, buf).await
+    }
 
-        while !buf.is_empty() {
-            match self.device.write_user(buf).await {
-                Ok(written) => {
-                    buf = &buf[written..];
-                }
-                Err(err) => {
-                    // The device was likely unplugged.
-                    (self.error_handler)(SerialStreamError::Serial(err));
-                    return false;
-                }
+    /// Forwards user input (the program's stdin) to the device and returns whether it was sent.
+    pub async fn handle_user_input(&mut self, buf: &[u8]) -> bool {
+        trace!(body = %String::from_utf8_lossy(buf), "usr -> dev[usr]");
+        self.send(Channel::User, buf).await
+    }
+
+    async fn send(&mut self, channel: Channel, buf: &[u8]) -> bool {
+        match Packet::write_all(&mut self.device, channel, buf).await {
+            Ok(()) => true,
+            Err(err) => {
+                // The device was likely unplugged.
+                (self.error_handler)(SerialStreamError::Serial(err));
+                false
             }
         }
-
-        true
     }
 }
 
-#[derive(Debug, Error)]
-#[error("unknown channel {:?} ({:#x?})", self.0 as char, self.0)]
-pub struct UnknownChannel(u8);
-
-#[derive(Debug)]
-enum Channel {
-    User,
-    Debugger,
-    DebuggerLog,
+pub struct Packet<'a> {
+    channel: Channel,
+    body: &'a [u8],
 }
 
-impl TryFrom<u8> for Channel {
-    type Error = UnknownChannel;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            b'u' => Ok(Self::User),
-            b'd' => Ok(Self::Debugger),
-            b'l' => Ok(Self::DebuggerLog),
-            other => Err(UnknownChannel(other)),
+impl<'a> Packet<'a> {
+    /// The largest payload sent to the device in one packet.
+    ///
+    /// This limit helps to keep packets from different channels interleaved with low latency. The
+    /// device decodes packets as a stream, so there isn't as much a buffer size issue.
+    const MAX_PAYLOAD_LEN: usize = 128;
+
+    /// Creates a packet sending `data` on the given channel.
+    const fn new(channel: Channel, body: &'a [u8]) -> Self {
+        Self { channel, body }
+    }
+
+    /// Serializes the packet as bytes.
+    ///
+    /// The packet is built in `packet_buf` without COBS encoding, then appended to `dest_buf` with
+    /// a trailing null byte.
+    fn encode(&self, packet_buf: &mut Vec<u8>, dest_buf: &mut Vec<u8>) {
+        packet_buf.clear();
+        packet_buf.push(self.channel.id());
+        packet_buf.extend_from_slice(self.body);
+
+        let prev_size = dest_buf.len();
+        dest_buf.extend(iter::repeat_n(
+            0,
+            cobs::max_encoding_length(packet_buf.len()),
+        ));
+
+        let written = cobs::encode(packet_buf, &mut dest_buf[prev_size..]);
+        dest_buf.truncate(prev_size + written);
+        dest_buf.push(0);
+    }
+
+    /// Encodes `data` as packets on the given channel.
+    fn encode_all(channel: Channel, data: &[u8]) -> Vec<u8> {
+        let mut encode_buf = Vec::new();
+        let mut packet_buf = Vec::with_capacity(Self::MAX_PAYLOAD_LEN + 1);
+
+        for chunk in data.chunks(Self::MAX_PAYLOAD_LEN) {
+            Packet::new(channel, chunk).encode(&mut packet_buf, &mut encode_buf);
         }
+
+        encode_buf
+    }
+
+    /// Sends `data` to the device as packets on the given channel.
+    async fn write_all(
+        device: &mut SerialConnection,
+        channel: Channel,
+        data: &[u8],
+    ) -> Result<(), SerialError> {
+        let encoded = Self::encode_all(channel, data);
+        let mut buf = encoded.as_slice();
+        while !buf.is_empty() {
+            let written = device.write_user(buf).await?;
+            buf = &buf[written..];
+        }
+        Ok(())
+    }
+
+    /// Parses a non-COBS-encoded packet.
+    fn parse(data: &'a [u8]) -> Result<Self, PacketParseError> {
+        let Some(&channel_byte) = data.first() else {
+            return Err(PacketParseError::MissingChannel);
+        };
+
+        let channel = Channel::try_from(channel_byte)?;
+        let body = &data[1..];
+
+        Ok(Self { channel, body })
+    }
+
+    /// Sends a GDB interrupt (Ctrl-C) to the device.
+    pub async fn send_interrupt(device: &mut SerialConnection) -> Result<(), SerialError> {
+        const CTRL_C: u8 = 0x03;
+        // This starts with a packet delimiter so the device's decoder discards anything left over
+        // from an earlier connection.
+        device.write_user(&[0]).await?;
+        Packet::write_all(device, Channel::Debugger, &[CTRL_C]).await
     }
 }
 
@@ -193,20 +263,54 @@ pub enum PacketParseError {
     MissingChannel,
 }
 
-struct Packet<'a> {
-    channel: Channel,
-    body: &'a [u8],
+#[derive(Debug, Error)]
+#[error("unknown channel {:?} ({:#x?})", self.0 as char, self.0)]
+pub struct UnknownChannel(u8);
+
+#[derive(Debug, Clone, Copy)]
+enum Channel {
+    User,
+    Debugger,
+    DebuggerLog,
 }
 
-impl<'a> Packet<'a> {
-    fn parse(data: &'a [u8]) -> Result<Self, PacketParseError> {
-        let Some(&channel_byte) = data.first() else {
-            return Err(PacketParseError::MissingChannel);
-        };
+impl Channel {
+    const fn id(self) -> u8 {
+        match self {
+            Self::User => b'u',
+            Self::Debugger => b'd',
+            Self::DebuggerLog => b'l',
+        }
+    }
+}
 
-        let channel = Channel::try_from(channel_byte)?;
-        let body = &data[1..];
+impl TryFrom<u8> for Channel {
+    type Error = UnknownChannel;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        [Self::User, Self::Debugger, Self::DebuggerLog]
+            .into_iter()
+            .find(|channel| channel.id() == value)
+            .ok_or(UnknownChannel(value))
+    }
+}
 
-        Ok(Self { channel, body })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Long input should be split into multiple packets, each with the channel ID.
+    #[test]
+    fn encodes_packets() {
+        let long_data: Vec<u8> = (0..300).map(|n| n as u8).collect();
+        let encoded = Packet::encode_all(Channel::User, &long_data);
+
+        let mut decoded = Vec::new();
+        for frame in encoded.split(|&byte| byte == 0).filter(|f| !f.is_empty()) {
+            let packet = cobs::decode_vec(frame).unwrap();
+            assert_eq!(packet[0], b'u');
+            assert!(packet.len() <= Packet::MAX_PAYLOAD_LEN + 1);
+            decoded.extend_from_slice(&packet[1..]);
+        }
+        assert_eq!(decoded, long_data);
     }
 }
